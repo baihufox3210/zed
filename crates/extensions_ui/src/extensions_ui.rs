@@ -1,4 +1,5 @@
 mod components;
+mod patch_manager_ui;
 mod extension_suggestions;
 mod extension_version_selector;
 
@@ -103,6 +104,7 @@ fn update_rebuild_dev_extension_visibility(store: &Entity<ExtensionStore>, cx: &
 }
 
 pub fn init(cx: &mut App) {
+    patch_manager_ui::init(cx);
     let store = ExtensionStore::global(cx);
     update_rebuild_dev_extension_visibility(&store, cx);
     cx.observe(&store, |store, cx| {
