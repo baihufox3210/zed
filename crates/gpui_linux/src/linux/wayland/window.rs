@@ -763,6 +763,7 @@ pub(crate) struct WaylandWindow(pub WaylandWindowStatePtr);
 pub enum ImeInput {
     InsertText(String),
     SetMarkedText(String),
+    SetPreeditText(String, Option<std::ops::Range<usize>>),
     UnmarkText,
     DeleteText,
 }
@@ -1479,6 +1480,9 @@ impl WaylandWindowStatePtr {
                 }
                 ImeInput::SetMarkedText(text) => {
                     input_handler.replace_and_mark_text_in_range(None, &text, None);
+                }
+                ImeInput::SetPreeditText(text, selection) => {
+                    input_handler.replace_and_mark_text_in_range(None, &text, selection);
                 }
                 ImeInput::UnmarkText => {
                     input_handler.unmark_text();

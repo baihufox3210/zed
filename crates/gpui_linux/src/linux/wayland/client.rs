@@ -192,6 +192,15 @@ fn set_ime_cursor_rectangle_after_done(
     }
 }
 
+// Wayland reports UTF-8 byte offsets; GPUI input handlers use UTF-16 offsets.
+fn preedit_selection(text: &str, begin: i32, end: i32) -> Option<std::ops::Range<usize>> {
+    let begin = usize::try_from(begin).ok()?;
+    let end = usize::try_from(end).ok()?;
+    let begin = text.get(..begin)?.encode_utf16().count();
+    let end = text.get(..end)?.encode_utf16().count();
+    Some(begin.min(end)..begin.max(end))
+}
+
 /// Pacing for retry ticks: a fixed 60Hz interval. Retries only occur for throttled or
 /// failed-present frames, so matching the output's actual refresh rate wouldn't be observable.
 const FRAME_RETRY_INTERVAL: Duration = Duration::from_micros(16_667);
@@ -366,7 +375,7 @@ pub(crate) struct WaylandClientState {
     primary_selection: Option<zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1>,
     text_input: Option<zwp_text_input_v3::ZwpTextInputV3>,
     pre_edit_text: Option<String>,
-    ime_pre_edit: Option<String>,
+    ime_pre_edit: Option<(String, Option<std::ops::Range<usize>>)>,
     composing: bool,
     last_ime_cursor_rectangle: Option<ImeCursorRectangle>,
     // Surface to Window mapping
@@ -2320,9 +2329,16 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
                     }
                 }
             }
-            zwp_text_input_v3::Event::PreeditString { text, .. } => {
+            zwp_text_input_v3::Event::PreeditString {
+                text,
+                cursor_begin,
+                cursor_end,
+            } => {
                 state.composing = true;
-                state.ime_pre_edit = text;
+                state.ime_pre_edit = text.map(|text| {
+                    let selection = preedit_selection(&text, cursor_begin, cursor_end);
+                    (text, selection)
+                });
             }
             zwp_text_input_v3::Event::Done { serial } => {
                 let last_serial = state.serial_tracker.get(SerialKind::InputMethod);
@@ -2331,9 +2347,9 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
                     return;
                 };
 
-                if let Some(text) = state.ime_pre_edit.take() {
+                if let Some((text, selection)) = state.ime_pre_edit.take() {
                     drop(state);
-                    window.handle_ime(ImeInput::SetMarkedText(text));
+                    window.handle_ime(ImeInput::SetPreeditText(text, selection));
                     if let Some(area) = window.get_ime_area() {
                         let mut state = client.borrow_mut();
                         set_ime_cursor_rectangle_after_done(
@@ -3416,6 +3432,16 @@ mod tests {
 
     fn ime_cursor_bounds(x: f32) -> Bounds<Pixels> {
         Bounds::new(point(px(x), px(20.25)), size(px(1.0), px(18.75)))
+    }
+
+    #[test]
+    fn converts_wayland_preedit_cursor_to_utf16() {
+        assert_eq!(preedit_selection("中文🙂", 3, 10), Some(1..4));
+        assert_eq!(preedit_selection("中文🙂", 10, 3), Some(1..4));
+        assert_eq!(preedit_selection("中文", 3, 3), Some(1..1));
+        assert_eq!(preedit_selection("中文", -1, -1), None);
+        assert_eq!(preedit_selection("中文", 1, 3), None);
+        assert_eq!(preedit_selection("中文", 0, 99), None);
     }
 
     #[test]

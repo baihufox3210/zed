@@ -1,0 +1,14 @@
+{
+  "patches": [
+    {
+      "id": "wayland-ime-preedit-cursor",
+      "name": "Wayland IME Preedit Cursor",
+      "description": "Respect the IME preedit cursor and selection, converting Wayland UTF-8 byte offsets to GPUI UTF-16 positions. Requires rebuilding and restarting Zed.",
+      "category": "Input Method",
+      "source": "patches/wayland-ime-preedit-cursor.patch",
+      "sha256": "0b6e163596167f0c9023db159a9c296835d150d16e030f5b912811cfc0bfde05",
+      "enabled": true,
+      "rebuild_required": true
+    }
+  ]
+}

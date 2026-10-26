@@ -6124,11 +6124,13 @@ dependencies = [
  "fs",
  "fuzzy",
  "git",
+ "git_ui",
  "gpui",
  "http_client",
  "language",
  "log",
  "markdown",
+ "patch_manager",
  "paths",
  "picker",
  "project",
@@ -6140,8 +6142,10 @@ dependencies = [
  "settings",
  "strum 0.28.0",
  "telemetry",
+ "theme",
  "theme_settings",
  "ui",
+ "ui_input",
  "util",
  "vim_mode_setting",
  "workspace",
@@ -12529,6 +12533,17 @@ name = "pastey"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
+
+[[package]]
+name = "patch_manager"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
 
 [[package]]
 name = "path"

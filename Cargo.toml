@@ -161,6 +161,7 @@ members = [
     "crates/opencode",
     "crates/outline",
     "crates/outline_panel",
+    "crates/patch_manager",
     "crates/path",
     "crates/paths",
     "crates/picker",
@@ -434,6 +435,7 @@ openai_subscribed = { path = "crates/openai_subscribed" }
 opencode = { path = "crates/opencode" }
 outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
+patch_manager = { path = "crates/patch_manager" }
 path = { path = "crates/path" }
 paths = { path = "crates/paths" }
 perf = { path = "tooling/perf", default-features = false }
