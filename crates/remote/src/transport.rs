@@ -258,6 +258,70 @@ fn handle_rpc_messages_over_child_process_stdio(
     })
 }
 
+#[cfg(any(test, debug_assertions, feature = "build-remote-server-binary"))]
+async fn local_server_binary_digest(path: &std::path::Path) -> Result<String> {
+    let file = smol::fs::File::open(path).await?;
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some("gz") => {
+            server_binary_digest(async_compression::futures::bufread::GzipDecoder::new(
+                futures::io::BufReader::new(file),
+            ))
+            .await
+        }
+        Some("zip") => {
+            let directory = tempfile::tempdir()?;
+            util::archive::extract_zip(directory.path(), file).await?;
+            server_binary_digest(
+                smol::fs::File::open(directory.path().join("remote_server.exe")).await?,
+            )
+            .await
+        }
+        _ => server_binary_digest(file).await,
+    }
+}
+
+#[cfg(any(test, debug_assertions, feature = "build-remote-server-binary"))]
+async fn server_binary_digest(mut reader: impl futures::AsyncRead + Unpin) -> Result<String> {
+    use sha2::{Digest as _, Sha256};
+
+    let mut digest = Sha256::new();
+    let mut buffer = [0; 64 * 1024];
+    loop {
+        let count = reader.read(&mut buffer).await?;
+        if count == 0 {
+            break;
+        }
+        digest.update(&buffer[..count]);
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
+#[cfg(any(test, debug_assertions, feature = "build-remote-server-binary"))]
+fn server_binary_matches(local_digest: &str, remote_output: &str, compatible: bool) -> bool {
+    compatible
+        && remote_output.lines().last().is_some_and(|line| {
+            let remote_digest = line.split_whitespace().next().unwrap_or_default();
+            remote_digest.len() == 64 && remote_digest.eq_ignore_ascii_case(local_digest)
+        })
+}
+
+#[cfg(any(test, debug_assertions, feature = "build-remote-server-binary"))]
+fn server_digest_script(path: &str, windows: bool) -> Result<String> {
+    use util::shell::ShellKind;
+
+    if windows {
+        let path = ShellKind::Pwsh.try_quote(path).context("shell quoting")?;
+        Ok(format!(
+            "(Get-FileHash -Algorithm SHA256 -LiteralPath {path} -ErrorAction Stop).Hash"
+        ))
+    } else {
+        let path = ShellKind::Posix.try_quote(path).context("shell quoting")?;
+        Ok(format!(
+            "if command -v sha256sum >/dev/null 2>&1; then sha256sum {path}; else shasum -a 256 {path}; fi"
+        ))
+    }
+}
+
 #[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
 async fn build_remote_server_from_source(
     platform: &crate::RemotePlatform,
@@ -546,6 +610,110 @@ async fn which(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_server_binary_cache_decision() -> Result<()> {
+        smol::block_on(async {
+            let digest = server_binary_digest(&b"abc"[..]).await?;
+            assert_eq!(
+                digest,
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+            );
+            assert!(server_binary_matches(
+                &digest,
+                &format!("{digest}  server\n"),
+                true
+            ));
+            assert!(server_binary_matches(&digest, &digest.to_uppercase(), true));
+            assert!(!server_binary_matches(&digest, &digest, false));
+            assert!(!server_binary_matches(&digest, "", true));
+            assert!(!server_binary_matches(&digest, "invalid", true));
+            let changed = server_binary_digest(&b"changed"[..]).await?;
+            assert!(!server_binary_matches(&digest, &changed, true));
+            anyhow::Ok(())
+        })
+    }
+
+    #[test]
+    fn test_local_server_archive_digest() -> Result<()> {
+        smol::block_on(async {
+            use futures::AsyncWriteExt as _;
+
+            let directory = tempfile::tempdir()?;
+            let binary = directory.path().join("remote_server");
+            smol::fs::write(&binary, b"server executable").await?;
+            let expected = local_server_binary_digest(&binary).await?;
+            let archive = directory.path().join("remote_server.gz");
+            let mut encoder = async_compression::futures::write::GzipEncoder::new(
+                smol::fs::File::create(&archive).await?,
+            );
+            encoder.write_all(b"server executable").await?;
+            encoder.close().await?;
+            assert_eq!(local_server_binary_digest(&archive).await?, expected);
+            smol::fs::write(&archive, b"corrupt gzip").await?;
+            assert!(local_server_binary_digest(&archive).await.is_err());
+
+            let archive = directory.path().join("remote_server.zip");
+            let mut archive_file = smol::fs::File::create(&archive).await?;
+            let mut writer = async_zip::base::write::ZipFileWriter::new(&mut archive_file);
+            writer
+                .write_entry_whole(
+                    async_zip::ZipEntryBuilder::new(
+                        "remote_server.exe".into(),
+                        async_zip::Compression::Deflate,
+                    ),
+                    b"server executable",
+                )
+                .await?;
+            writer.close().await?;
+            archive_file.flush().await?;
+            assert_eq!(local_server_binary_digest(&archive).await?, expected);
+            smol::fs::write(&archive, b"corrupt zip").await?;
+            assert!(local_server_binary_digest(&archive).await.is_err());
+            anyhow::Ok(())
+        })
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_remote_server_repeated_checksum_probes() -> Result<()> {
+        smol::block_on(async {
+            let directory = tempfile::tempdir()?;
+            let binary = directory.path().join("server with 'quotes'");
+            smol::fs::write(&binary, b"server executable").await?;
+            let local_digest = local_server_binary_digest(&binary).await?;
+            let script = server_digest_script(&binary.to_string_lossy(), false)?;
+            for _ in 0..2 {
+                let output = util::command::new_command("sh")
+                    .args(["-c", &script])
+                    .output()
+                    .await?;
+                assert!(output.status.success());
+                assert!(server_binary_matches(
+                    &local_digest,
+                    &String::from_utf8(output.stdout)?,
+                    true,
+                ));
+            }
+            smol::fs::write(&binary, b"changed executable").await?;
+            let output = util::command::new_command("sh")
+                .args(["-c", &script])
+                .output()
+                .await?;
+            assert!(!server_binary_matches(
+                &local_digest,
+                &String::from_utf8(output.stdout)?,
+                true,
+            ));
+            smol::fs::remove_file(&binary).await?;
+            let output = util::command::new_command("sh")
+                .args(["-c", &script])
+                .output()
+                .await?;
+            assert!(!output.status.success());
+            anyhow::Ok(())
+        })
+    }
 
     #[test]
     fn test_parse_platform() {

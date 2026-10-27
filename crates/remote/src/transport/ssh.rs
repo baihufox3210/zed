@@ -1043,7 +1043,7 @@ impl SshRemoteConnection {
                 true,
             )
             .await
-            .is_ok();
+            .is_ok_and(|version| !version.trim().is_empty());
 
         #[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
         if let Some(remote_server_path) = super::build_remote_server_from_source(
@@ -1054,11 +1054,50 @@ impl SshRemoteConnection {
         )
         .await?
         {
+            let local_digest = super::local_server_binary_digest(&remote_server_path)
+                .await
+                .context("hashing local remote server binary")?;
+            let windows = self.ssh_platform.os.is_windows();
+            let script =
+                super::server_digest_script(&dst_path.display(self.path_style()), windows)?;
+            let shell_kind = if windows {
+                ShellKind::Pwsh
+            } else {
+                ShellKind::Posix
+            };
+            let arguments = shell_kind.args_for_shell(false, script);
+            let remote_digest = self
+                .socket
+                .run_command(
+                    self.ssh_shell_kind,
+                    if windows { "powershell" } else { "sh" },
+                    &arguments,
+                    true,
+                )
+                .await;
+            let cache_hit = match remote_digest {
+                Ok(output) => {
+                    super::server_binary_matches(&local_digest, &output, binary_exists_on_server)
+                }
+                Err(error) => {
+                    log::debug!(transport = "ssh", event = "cache_miss"; "Remote server digest unavailable: {error:#}");
+                    false
+                }
+            };
+            if cache_hit {
+                log::info!(transport = "ssh", event = "cache_hit", sha256 = local_digest.as_str(); "Reusing remote server binary");
+                return Ok(dst_path.into());
+            }
+            log::info!(transport = "ssh", event = "cache_miss", sha256 = local_digest.as_str(); "Remote server binary missing, different, or invalid");
+            log::info!(transport = "ssh", event = "upload", sha256 = local_digest.as_str(); "Uploading remote server binary");
             let tmp_path = paths::remote_server_dir_relative().join(
                 RelPath::from_unix_str(&format!(
                     "download-{}-{}",
                     std::process::id(),
-                    remote_server_path.file_name().unwrap().to_string_lossy()
+                    remote_server_path
+                        .file_name()
+                        .context("local remote server binary has no filename")?
+                        .to_string_lossy()
                 ))
                 .unwrap(),
             );
