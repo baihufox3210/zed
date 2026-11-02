@@ -367,6 +367,21 @@ fn background_page(cx: &App) -> SettingsPage {
             metadata: None,
             files: USER,
         }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Message Opacity",
+            description: "Opacity of AI conversation message backgrounds, from 0 to 100%.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                json_path: Some("background.message_opacity"),
+                pick: |content| content.background.as_ref()?.message_opacity.as_ref(),
+                write: |content, value, _| {
+                    content.background.get_or_insert_default().message_opacity =
+                        value.map(|value: f32| value.clamp(0.0, 1.0));
+                },
+            }),
+            metadata: None,
+            files: USER,
+        }),
         SettingsPageItem::SectionHeader("Image Layout"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Background Size",

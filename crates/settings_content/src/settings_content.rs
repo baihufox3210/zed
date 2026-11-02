@@ -388,6 +388,8 @@ pub struct BackgroundSettingsContent {
     pub overlay_opacity: Option<f32>,
     #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
     pub surface_opacity: Option<f32>,
+    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
+    pub message_opacity: Option<f32>,
 }
 
 #[derive(

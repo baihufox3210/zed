@@ -7437,7 +7437,7 @@ impl ThreadView {
                                     .py_3()
                                     .px_2()
                                     .rounded_md()
-                                    .bg(if settings::background::includes(settings::background::Region::Assistant, cx) { gpui::transparent_black() } else { cx.theme().colors().editor_background })
+                                    .bg(settings::background::message_color(cx.theme().colors().editor_background, cx))
                                     .border_1()
                                     .when(is_indented, |this| {
                                         this.py_2().px_2().when(opaque_window, |this| {
@@ -7475,7 +7475,7 @@ impl ThreadView {
                                     .rounded_sm()
                                     .border_1()
                                     .border_color(cx.theme().colors().border)
-                                    .bg(if settings::background::includes(settings::background::Region::Assistant, cx) { gpui::transparent_black() } else { cx.theme().colors().editor_background })
+                                    .bg(settings::background::message_color(cx.theme().colors().editor_background, cx))
                                     .overflow_hidden();
 
                                 let is_loading_contents = self.is_loading_contents;
@@ -7769,25 +7769,21 @@ impl ThreadView {
             primary
         };
 
-        let primary =
-            if matches!(
-                entry,
-                AgentThreadEntry::UserMessage(_) | AgentThreadEntry::AssistantMessage(_)
-            ) && settings::background::includes(settings::background::Region::Assistant, cx)
-            {
-                div()
-                    .w_full()
-                    .rounded_md()
-                    .bg(settings::background::chrome_surface_color(
-                        cx.theme().colors().editor_background,
-                        settings::background::Region::Assistant,
-                        cx,
-                    ))
-                    .child(primary)
-                    .into_any_element()
-            } else {
-                primary
-            };
+        let primary = if matches!(entry, AgentThreadEntry::AssistantMessage(_))
+            && settings::background::includes(settings::background::Region::Assistant, cx)
+        {
+            div()
+                .w_full()
+                .rounded_md()
+                .bg(settings::background::message_color(
+                    cx.theme().colors().editor_background,
+                    cx,
+                ))
+                .child(primary)
+                .into_any_element()
+        } else {
+            primary
+        };
 
         let is_generating = matches!(thread.read(cx).status(), ThreadStatus::Generating);
 
