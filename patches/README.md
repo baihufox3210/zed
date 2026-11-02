@@ -92,7 +92,7 @@ cargo check -p extensions_ui --tests
 Service tests use isolated Git repositories, including a complete validate,
 preview, revert and reapply cycle for the built-in patch. The GPUI test covers
 action dispatch, tab reuse, closure, reopening and an unavailable-checkout error.
-Validation completed: nine service tests, the GPUI tab lifecycle test, four
+Validation completed: thirteen service tests, the GPUI tab lifecycle test, four
 Wayland cursor tests, CLI operation flows, UI and Wayland compilation checks,
 service Clippy checks, and formatting checks passed.
 
@@ -102,13 +102,22 @@ IME input.
 
 ## Background settings
 
-Run **background: open settings** to choose a PNG, JPEG, or WebP image and adjust
-its composition with native controls. **Background Preview** renders a real
-Editor with the same image cache and settings. Sliders have numeric inputs for
-precise values. Settings are saved to the user's settings file automatically.
+Run **background: open settings** to open the Background page. It is grouped as:
+
+- **Image** — **Show Background**, **Image File** (PNG, JPEG, or WebP),
+  **Remove Image**, and **Preview**, which renders a real Editor with the same
+  image cache and settings. Choosing an image turns the background on;
+  removing it turns it off.
+- **Coverage** — **Apply Background To** (see below).
+- **Image Adjustments** — Fit, Position, Image Opacity, Blur and Darken.
+- **Readability** — Theme Tint, Gutter & Tab Opacity and AI Message Opacity.
+- **Reset** — restores every background setting to its default.
+
+Sliders have numeric inputs for precise values. Settings are saved to the
+user's settings file automatically.
 
 The `native-background-settings` registration tracks the source patch separately
-from the runtime Enable Background switch. Reverting or applying source requires
+from the runtime Show Background switch. Reverting or applying source requires
 a rebuild and restart; changing background settings does not.
 
 **Update Patch** accepts a replacement local `.patch` for a compatible, unapplied
@@ -120,8 +129,9 @@ Background range is controlled by **Apply Background To**:
 
 - **Window** uses one continuous image across the Zed client area.
 - **Editor** shows the image only behind editors.
-- **Custom** exposes switches for Editor, Side Panels (Files/Git/Outline),
-  AI Assistant, Terminal, and Window Bars (title/tab/toolbar/status).
+- **Custom** expands switches for Editor, Side Panels (Files/Git/Outline),
+  AI Assistant, Terminal, and Window Bars (title/tab/toolbar/status) directly
+  beneath the selector.
 
 Custom selections are retained when switching modes. Areas that are not selected
 keep their theme backgrounds. Images are rendered once at the window root;

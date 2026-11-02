@@ -59,6 +59,7 @@ pub struct PatchState {
 #[derive(Clone)]
 pub struct PatchService {
     root: PathBuf,
+    lock_path: PathBuf,
 }
 
 pub struct DiffPreview {
@@ -66,21 +67,28 @@ pub struct DiffPreview {
     _directory: tempfile::TempDir,
 }
 
+impl Manifest {
+    fn find(&self, id: &str) -> Result<&Patch> {
+        self.patches
+            .iter()
+            .find(|patch| patch.id == id)
+            .with_context(|| format!("Unknown patch ID: {id}"))
+    }
+
+    fn find_mut(&mut self, id: &str) -> Result<&mut Patch> {
+        self.patches
+            .iter_mut()
+            .find(|patch| patch.id == id)
+            .with_context(|| format!("Unknown patch ID: {id}"))
+    }
+}
+
 impl PatchService {
     pub fn open(root: &Path) -> Result<Self> {
         let root = fs::canonicalize(root)?;
-        let output = run_command(
-            Command::new("git")
-                .arg("-C")
-                .arg(&root)
-                .args(["rev-parse", "--show-toplevel"]),
-        )?;
-        ensure!(
-            output.status.success(),
-            "Open a local Git source checkout first"
-        );
-        let git_root = PathBuf::from(String::from_utf8(output.stdout)?.trim());
-        let root = fs::canonicalize(git_root)?;
+        let output = git_output(&root, &["rev-parse", "--show-toplevel"])
+            .context("Open a local Git source checkout first")?;
+        let root = fs::canonicalize(output.trim())?;
         ensure!(
             root.join("patches/manifest.json").is_file(),
             "This checkout has no patches/manifest.json. Open the Zed source checkout containing Patch Manager."
@@ -89,39 +97,37 @@ impl PatchService {
             fs::canonicalize(root.join("patches"))? == root.join("patches"),
             "Registry directory cannot be a symlink"
         );
-        Ok(Self { root })
+        let lock_path = git_output(
+            &root,
+            &["rev-parse", "--git-path", "zed-patch-manager.lock"],
+        )
+        .context("Cannot locate Git directory")?;
+        let lock_path = root.join(lock_path.trim());
+        Ok(Self { root, lock_path })
     }
 
     pub fn root(&self) -> &Path {
         &self.root
     }
 
+    fn registry(&self) -> PathBuf {
+        self.root.join("patches")
+    }
+
     fn lock(&self) -> Result<File> {
-        let output = self.git(&["rev-parse", "--git-path", "zed-patch-manager.lock"])?;
-        ensure!(output.status.success(), "Cannot locate Git directory");
-        let path = PathBuf::from(String::from_utf8(output.stdout)?.trim());
         let file = OpenOptions::new()
             .create(true)
             .truncate(false)
             .read(true)
             .write(true)
-            .open(self.root.join(path))?;
+            .open(&self.lock_path)?;
         file.lock()?;
         Ok(file)
     }
 
-    fn git(&self, arguments: &[&str]) -> Result<Output> {
-        run_command(
-            Command::new("git")
-                .arg("-C")
-                .arg(&self.root)
-                .args(arguments),
-        )
-    }
-
     fn read_manifest(&self) -> Result<Manifest> {
         let manifest: Manifest =
-            serde_json::from_slice(&fs::read(self.root.join("patches/manifest.json"))?)?;
+            serde_json::from_slice(&fs::read(self.registry().join("manifest.json"))?)?;
         let mut identifiers = std::collections::HashSet::new();
         for patch in &manifest.patches {
             validate_metadata(patch)?;
@@ -135,11 +141,11 @@ impl PatchService {
     }
 
     fn write_manifest(&self, manifest: &Manifest) -> Result<()> {
-        let mut temporary = tempfile::NamedTempFile::new_in(self.root.join("patches"))?;
+        let mut temporary = tempfile::NamedTempFile::new_in(self.registry())?;
         temporary.write_all(&serde_json::to_vec_pretty(manifest)?)?;
         temporary.write_all(b"\n")?;
         temporary.as_file().sync_all()?;
-        temporary.persist(self.root.join("patches/manifest.json"))?;
+        temporary.persist(self.registry().join("manifest.json"))?;
         Ok(())
     }
 
@@ -150,7 +156,7 @@ impl PatchService {
         );
         let path = fs::canonicalize(self.root.join(&patch.source))?;
         ensure!(
-            path.starts_with(self.root.join("patches")),
+            path.starts_with(self.registry()),
             "Patch source escapes registry"
         );
         ensure!(
@@ -159,120 +165,15 @@ impl PatchService {
         );
         let bytes = fs::read(&path)?;
         ensure!(
-            format!("{:x}", Sha256::digest(&bytes)) == patch.sha256,
+            sha256(&bytes) == patch.sha256,
             "Patch content changed: SHA-256 mismatch"
         );
         Ok(path)
     }
 
-    fn affected_files(&self, path: &Path) -> Result<Vec<String>> {
-        let content = fs::read_to_string(path).context("Only UTF-8 text patches are supported")?;
-        ensure!(
-            !content.lines().any(|line| line.contains("mode 120000")
-                || line.contains("mode 160000")
-                || line == "GIT binary patch"),
-            "Symlink, submodule and binary patches are not supported"
-        );
-        let output = run_command(
-            Command::new("git")
-                .arg("-C")
-                .arg(&self.root)
-                .args(["apply", "--numstat", "-z", "--"])
-                .arg(path),
-        )?;
-        ensure!(
-            output.status.success(),
-            "Invalid patch: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let mut files = Vec::new();
-        for entry in output
-            .stdout
-            .split(|byte| *byte == 0)
-            .filter(|entry| !entry.is_empty())
-        {
-            let entry = std::str::from_utf8(entry)?;
-            let file = entry
-                .splitn(3, '\t')
-                .nth(2)
-                .context("Unsupported patch path format")?;
-            ensure!(safe_relative_path(file), "Unsafe affected path: {file}");
-            ensure!(
-                !file.starts_with("patches/")
-                    && !file
-                        .split('/')
-                        .any(|part| part.eq_ignore_ascii_case(".git")),
-                "Patches cannot modify Git metadata or the patch registry"
-            );
-            files.push(file.to_owned());
-        }
-        ensure!(!files.is_empty(), "Patch contains no text changes");
-        Ok(files)
-    }
-
-    fn check(&self, path: &Path, reverse: bool) -> Result<Output> {
-        let mut command = Command::new("git");
-        command.arg("-C").arg(&self.root).args(["apply", "--check"]);
-        if reverse {
-            command.arg("--reverse");
-        }
-        run_command(command.arg("--").arg(path))
-    }
-
-    fn state(&self, patch: Patch) -> Result<PatchState> {
-        let path = self.patch_path(&patch)?;
-        let affected_files = self.affected_files(&path)?;
-        let forward = self.check(&path, false)?;
-        let reverse = self.check(&path, true)?;
-        let (compatibility, validation) = if reverse.status.success() && !forward.status.success() {
-            (Compatibility::AlreadyApplied, "Patch already applied to source. Build and restart required; runtime state is unverified.".to_owned())
-        } else if forward.status.success() && !reverse.status.success() {
-            (
-                Compatibility::Compatible,
-                "Patch compatible with the current source checkout.".to_owned(),
-            )
-        } else {
-            (
-                Compatibility::Conflict,
-                format!(
-                    "Patch conflict or ambiguous application state.\n{}\n{}",
-                    String::from_utf8_lossy(&forward.stderr),
-                    String::from_utf8_lossy(&reverse.stderr)
-                ),
-            )
-        };
-        let rebuild_required =
-            patch.rebuild_required || compatibility == Compatibility::AlreadyApplied;
-        Ok(PatchState {
-            patch,
-            compatibility,
-            affected_files,
-            validation,
-            rebuild_required,
-        })
-    }
-
-    pub fn list(&self) -> Result<Vec<PatchState>> {
-        let _lock = self.lock()?;
-        self.read_manifest()?
-            .patches
-            .into_iter()
-            .map(|patch| match self.state(patch.clone()) {
-                Ok(state) => Ok(state),
-                Err(error) => Ok(PatchState {
-                    rebuild_required: patch.rebuild_required,
-                    patch,
-                    compatibility: Compatibility::Conflict,
-                    affected_files: Vec::new(),
-                    validation: format!("Validation failed: {error:#}"),
-                }),
-            })
-            .collect()
-    }
-
-    pub fn register(&self, source: &Path, mut patch: Patch) -> Result<()> {
-        let _lock = self.lock()?;
-        validate_metadata(&patch)?;
+    /// Copies a user-selected patch into the registry directory and validates
+    /// it, so that the checked content is exactly the content that gets persisted.
+    fn stage(&self, source: &Path) -> Result<(Vec<u8>, tempfile::NamedTempFile)> {
         ensure!(
             source
                 .extension()
@@ -284,25 +185,173 @@ impl PatchService {
             "Patch exceeds 10 MiB"
         );
         let content = fs::read(source)?;
+        let mut temporary = tempfile::NamedTempFile::new_in(self.registry())?;
+        temporary.write_all(&content)?;
+        temporary.as_file().sync_all()?;
+        self.affected_files(temporary.path())?;
+        Ok((content, temporary))
+    }
+
+    fn affected_files(&self, path: &Path) -> Result<Vec<String>> {
+        let content = fs::read_to_string(path).context("Only UTF-8 text patches are supported")?;
+        ensure!(
+            !content.lines().any(is_unsupported_header),
+            "Symlink, submodule and binary patches are not supported"
+        );
+        let mut command = Command::new("git");
+        command
+            .arg("-C")
+            .arg(&self.root)
+            .args(["apply", "--numstat", "-z", "--"])
+            .arg(path);
+        let output = run_command(&mut command)?;
+        ensure!(
+            output.status.success(),
+            "Invalid patch: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let mut entries = output
+            .stdout
+            .split(|byte| *byte == 0)
+            .filter(|entry| !entry.is_empty());
+        // `--numstat` reports only the destination of a pure rename or copy,
+        // so the source paths are taken from the extended headers.
+        let mut paths: Vec<&str> = content
+            .lines()
+            .filter_map(|line| {
+                ["rename from ", "copy from "]
+                    .iter()
+                    .find_map(|prefix| line.strip_prefix(prefix))
+            })
+            .collect();
+        while let Some(entry) = entries.next() {
+            let mut fields = std::str::from_utf8(entry)?.splitn(3, '\t');
+            let added = fields.next();
+            let deleted = fields.next();
+            let path = fields.next().context("Unsupported patch path format")?;
+            ensure!(
+                added != Some("-") && deleted != Some("-"),
+                "Binary patches are not supported"
+            );
+            // With `-z`, a rename that also edits content leaves the path field
+            // empty and lists the old and new paths as the next two entries.
+            if path.is_empty() {
+                for _ in 0..2 {
+                    paths.push(std::str::from_utf8(
+                        entries.next().context("Unsupported rename format")?,
+                    )?);
+                }
+            } else {
+                paths.push(path);
+            }
+        }
+        let mut files: Vec<String> = Vec::new();
+        for file in paths {
+            ensure!(safe_relative_path(file), "Unsafe affected path: {file}");
+            ensure!(
+                !file.starts_with("patches/")
+                    && !file
+                        .split('/')
+                        .any(|part| part.eq_ignore_ascii_case(".git")),
+                "Patches cannot modify Git metadata or the patch registry"
+            );
+            if !files.iter().any(|existing| existing == file) {
+                files.push(file.to_owned());
+            }
+        }
+        ensure!(!files.is_empty(), "Patch contains no text changes");
+        Ok(files)
+    }
+
+    fn compatibility(&self, path: &Path) -> Result<(Compatibility, String)> {
+        let check = |reverse: bool| {
+            let mut command = Command::new("git");
+            command.arg("-C").arg(&self.root).args(["apply", "--check"]);
+            if reverse {
+                command.arg("--reverse");
+            }
+            run_command(command.arg("--").arg(path))
+        };
+        let forward = check(false)?;
+        let reverse = check(true)?;
+        Ok(
+            match (forward.status.success(), reverse.status.success()) {
+                (false, true) => (
+                    Compatibility::AlreadyApplied,
+                    "Patch already applied to source. Build and restart required; runtime state is unverified.".to_owned(),
+                ),
+                (true, false) => (
+                    Compatibility::Compatible,
+                    "Patch compatible with the current source checkout.".to_owned(),
+                ),
+                _ => (
+                    Compatibility::Conflict,
+                    format!(
+                        "Patch conflict or ambiguous application state.\n{}\n{}",
+                        String::from_utf8_lossy(&forward.stderr).trim(),
+                        String::from_utf8_lossy(&reverse.stderr).trim()
+                    ),
+                ),
+            },
+        )
+    }
+
+    /// Returns the verified registry path together with the state so callers
+    /// that go on to run Git do not hash the patch a second time.
+    fn inspect(&self, patch: Patch) -> Result<(PatchState, PathBuf)> {
+        let path = self.patch_path(&patch)?;
+        let affected_files = self.affected_files(&path)?;
+        let (compatibility, validation) = self.compatibility(&path)?;
+        let rebuild_required =
+            patch.rebuild_required || compatibility == Compatibility::AlreadyApplied;
+        Ok((
+            PatchState {
+                patch,
+                compatibility,
+                affected_files,
+                validation,
+                rebuild_required,
+            },
+            path,
+        ))
+    }
+
+    pub fn list(&self) -> Result<Vec<PatchState>> {
+        let _lock = self.lock()?;
+        Ok(self
+            .read_manifest()?
+            .patches
+            .into_iter()
+            .map(|patch| match self.inspect(patch.clone()) {
+                Ok((state, _)) => state,
+                Err(error) => PatchState {
+                    rebuild_required: patch.rebuild_required,
+                    patch,
+                    compatibility: Compatibility::Conflict,
+                    affected_files: Vec::new(),
+                    validation: format!("Validation failed: {error:#}"),
+                },
+            })
+            .collect())
+    }
+
+    pub fn register(&self, source: &Path, mut patch: Patch) -> Result<()> {
+        let _lock = self.lock()?;
+        validate_metadata(&patch)?;
         let mut manifest = self.read_manifest()?;
         ensure!(
-            !manifest.patches.iter().any(|entry| entry.id == patch.id),
+            manifest.find(&patch.id).is_err(),
             "Patch ID already registered"
+        );
+        let (content, temporary) = self.stage(source)?;
+        let (compatibility, validation) = self.compatibility(temporary.path())?;
+        ensure!(
+            compatibility != Compatibility::Conflict,
+            "Patch is incompatible: {validation}"
         );
         patch.rebuild_required = false;
         patch.source = format!("patches/{}.patch", patch.id);
-        patch.sha256 = format!("{:x}", Sha256::digest(&content));
-        let mut temporary = tempfile::NamedTempFile::new_in(self.root.join("patches"))?;
-        temporary.write_all(&content)?;
-        self.affected_files(temporary.path())?;
-        let forward = self.check(temporary.path(), false)?;
-        let reverse = self.check(temporary.path(), true)?;
-        ensure!(
-            forward.status.success() || reverse.status.success(),
-            "Patch is incompatible:\n{}",
-            String::from_utf8_lossy(&forward.stderr)
-        );
-        temporary.as_file().sync_all()?;
+        patch.sha256 = sha256(&content);
         let destination = self.root.join(&patch.source);
         let created = if destination.exists() {
             ensure!(
@@ -329,46 +378,27 @@ impl PatchService {
     pub fn update(&self, id: &str, source: &Path) -> Result<()> {
         let _lock = self.lock()?;
         let mut manifest = self.read_manifest()?;
-        let patch = manifest
-            .patches
-            .iter_mut()
-            .find(|patch| patch.id == id)
-            .context("Unknown patch ID")?;
+        let patch = manifest.find_mut(id)?;
+        let (state, destination) = self.inspect(patch.clone())?;
         ensure!(
-            self.state(patch.clone())?.compatibility == Compatibility::Compatible,
+            state.compatibility == Compatibility::Compatible,
             "Revert the applied patch and resolve conflicts before updating its source"
         );
-        ensure!(
-            source
-                .extension()
-                .is_some_and(|extension| extension == "patch"),
-            "Select a .patch file"
-        );
-        ensure!(
-            fs::metadata(source)?.len() <= MAX_PATCH_SIZE,
-            "Patch exceeds 10 MiB"
-        );
-        let content = fs::read(source)?;
-        let destination = self.patch_path(patch)?;
+        let (content, temporary) = self.stage(source)?;
         let previous = fs::read(&destination)?;
         ensure!(
             content != previous,
             "This patch version is already registered"
         );
-        let mut temporary = tempfile::NamedTempFile::new_in(self.root.join("patches"))?;
-        temporary.write_all(&content)?;
-        self.affected_files(temporary.path())?;
-        let check = self.check(temporary.path(), false)?;
+        let (compatibility, validation) = self.compatibility(temporary.path())?;
         ensure!(
-            check.status.success(),
-            "Updated patch is incompatible: {}",
-            String::from_utf8_lossy(&check.stderr)
+            compatibility == Compatibility::Compatible,
+            "Updated patch is incompatible: {validation}"
         );
-        temporary.as_file().sync_all()?;
         temporary.persist(&destination)?;
-        patch.sha256 = format!("{:x}", Sha256::digest(&content));
+        patch.sha256 = sha256(&content);
         if let Err(error) = self.write_manifest(&manifest) {
-            let mut rollback = tempfile::NamedTempFile::new_in(self.root.join("patches"))?;
+            let mut rollback = tempfile::NamedTempFile::new_in(self.registry())?;
             rollback.write_all(&previous)?;
             rollback.as_file().sync_all()?;
             rollback
@@ -382,11 +412,10 @@ impl PatchService {
     pub fn set_enabled(&self, id: &str, enabled: bool) -> Result<()> {
         let _lock = self.lock()?;
         let mut manifest = self.read_manifest()?;
-        let patch = manifest
-            .patches
-            .iter_mut()
-            .find(|patch| patch.id == id)
-            .context("Unknown patch ID")?;
+        let patch = manifest.find_mut(id)?;
+        if patch.enabled == enabled {
+            return Ok(());
+        }
         patch.enabled = enabled;
         self.write_manifest(&manifest)
     }
@@ -394,10 +423,7 @@ impl PatchService {
     pub fn remove(&self, id: &str) -> Result<()> {
         let _lock = self.lock()?;
         let mut manifest = self.read_manifest()?;
-        ensure!(
-            manifest.patches.iter().any(|patch| patch.id == id),
-            "Unknown patch ID"
-        );
+        manifest.find(id)?;
         manifest.patches.retain(|patch| patch.id != id);
         self.write_manifest(&manifest)
     }
@@ -405,13 +431,7 @@ impl PatchService {
     pub fn apply(&self, id: &str, reverse: bool) -> Result<()> {
         let _lock = self.lock()?;
         let mut manifest = self.read_manifest()?;
-        let patch = manifest
-            .patches
-            .iter()
-            .find(|patch| patch.id == id)
-            .context("Unknown patch ID")?
-            .clone();
-        let state = self.state(patch)?;
+        let (state, path) = self.inspect(manifest.find(id)?.clone())?;
         if reverse {
             ensure!(
                 state.compatibility == Compatibility::AlreadyApplied,
@@ -424,7 +444,6 @@ impl PatchService {
                 "Patch already applied or conflicting"
             );
         }
-        let path = self.patch_path(&state.patch)?;
         // Never use --reject or --3way: a failed operation must not leave partial changes.
         let mut command = Command::new("git");
         command.arg("-C").arg(&self.root).arg("apply");
@@ -437,12 +456,7 @@ impl PatchService {
             "Git apply failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let patch = manifest
-            .patches
-            .iter_mut()
-            .find(|patch| patch.id == id)
-            .context("Unknown patch ID")?;
-        patch.rebuild_required = true;
+        manifest.find_mut(id)?.rebuild_required = true;
         self.write_manifest(&manifest)
             .context("Source changed, but could not persist the rebuild requirement")?;
         Ok(())
@@ -450,13 +464,7 @@ impl PatchService {
 
     pub fn preview(&self, id: &str) -> Result<DiffPreview> {
         let _lock = self.lock()?;
-        let patch = self
-            .read_manifest()?
-            .patches
-            .into_iter()
-            .find(|patch| patch.id == id)
-            .context("Unknown patch ID")?;
-        let state = self.state(patch)?;
+        let (state, patch_path) = self.inspect(self.read_manifest()?.find(id)?.clone())?;
         ensure!(
             state.compatibility != Compatibility::Conflict,
             "Resolve compatibility errors before viewing diff"
@@ -504,7 +512,7 @@ impl PatchService {
         if state.compatibility == Compatibility::AlreadyApplied {
             command.arg("--reverse");
         }
-        let output = run_command(command.arg("--").arg(self.patch_path(&state.patch)?))?;
+        let output = run_command(command.arg("--").arg(&patch_path))?;
         ensure!(
             output.status.success(),
             "Could not create diff: {}",
@@ -542,6 +550,43 @@ fn run_command(command: &mut Command) -> Result<Output> {
         .env_remove("GIT_INDEX_FILE")
         .output()
         .context("Could not run Git")
+}
+
+fn git_output(root: &Path, arguments: &[&str]) -> Result<String> {
+    let output = run_command(Command::new("git").arg("-C").arg(root).args(arguments))?;
+    ensure!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    Ok(String::from_utf8(output.stdout)?)
+}
+
+fn sha256(content: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(content))
+}
+
+/// Only extended header lines can declare symlink, submodule or binary
+/// content; hunk lines that merely contain the same text are ordinary changes.
+fn is_unsupported_header(line: &str) -> bool {
+    if line.starts_with(['+', '-', ' ']) {
+        return false;
+    }
+    let special_mode = |mode: &str| mode == "120000" || mode == "160000";
+    line == "GIT binary patch"
+        || line.starts_with("Binary files ")
+        || [
+            "new file mode ",
+            "deleted file mode ",
+            "old mode ",
+            "new mode ",
+        ]
+        .iter()
+        .any(|prefix| line.strip_prefix(prefix).is_some_and(special_mode))
+        || line
+            .strip_prefix("index ")
+            .and_then(|index| index.rsplit_once(' '))
+            .is_some_and(|(_, mode)| special_mode(mode))
 }
 
 fn safe_relative_path(value: &str) -> bool {

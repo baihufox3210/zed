@@ -1,4 +1,3 @@
-use gpui::ReadGlobal as _;
 use gpui::{Action as _, App, AppContext as _, PathPromptOptions};
 use itertools::Itertools as _;
 use settings::{
@@ -68,7 +67,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
     vec![
         general_page(cx),
         appearance_page(),
-        background_page(cx),
+        background_page(),
         keymap_page(),
         editor_page(),
         languages_and_tools_page(cx),
@@ -99,166 +98,186 @@ fn show_background_error(window: gpui::AnyWindowHandle, cx: &mut gpui::AsyncApp,
         .log_err();
 }
 
-fn save_background_change(
+async fn save_background_change(
+    window: gpui::AnyWindowHandle,
+    cx: &mut gpui::AsyncApp,
+    change: impl FnOnce(&mut SettingsContent, &App) + Send + 'static,
+) {
+    let completion = cx.update(|cx| {
+        settings::update_settings_file_with_completion(<dyn fs::Fs>::global(cx), cx, change)
+    });
+    let error = match completion.await {
+        Ok(Ok(())) => return,
+        Ok(Err(error)) => format!("{error:#}"),
+        Err(error) => error.to_string(),
+    };
+    show_background_error(
+        window,
+        cx,
+        format!("Could not save background settings: {error}"),
+    );
+}
+
+fn choose_background_image(window: &mut gpui::Window, cx: &mut App) {
+    let window_handle = window.window_handle();
+    let prompt = cx.prompt_for_paths(PathPromptOptions {
+        files: true,
+        directories: false,
+        multiple: false,
+        prompt: Some("Select background image".into()),
+    });
+    cx.spawn(async move |cx| {
+        let path = match prompt.await {
+            Ok(Ok(Some(paths))) => paths.into_iter().next(),
+            Ok(Ok(None)) => None,
+            Ok(Err(error)) => {
+                show_background_error(
+                    window_handle,
+                    cx,
+                    format!("Could not open image picker: {error:#}"),
+                );
+                None
+            }
+            Err(error) => {
+                show_background_error(window_handle, cx, format!("Image picker failed: {error}"));
+                None
+            }
+        };
+        let Some(path) = path else { return };
+        let supported = path.extension().is_some_and(|extension| {
+            matches!(
+                extension.to_str().map(str::to_ascii_lowercase).as_deref(),
+                Some("png" | "jpg" | "jpeg" | "webp")
+            )
+        });
+        if !supported {
+            show_background_error(
+                window_handle,
+                cx,
+                "Select a PNG, JPEG, or WebP image.".into(),
+            );
+            return;
+        }
+        let Some(image_path) = path.to_str().map(str::to_owned) else {
+            show_background_error(
+                window_handle,
+                cx,
+                "The image path must use valid Unicode characters.".into(),
+            );
+            return;
+        };
+        let validation = cx
+            .background_spawn(async move {
+                image::ImageReader::open(path)
+                    .map_err(anyhow::Error::from)?
+                    .with_guessed_format()
+                    .map_err(anyhow::Error::from)?
+                    .into_dimensions()
+                    .map_err(anyhow::Error::from)
+            })
+            .await;
+        if let Err(error) = validation {
+            show_background_error(
+                window_handle,
+                cx,
+                format!("Could not load image: {error:#}"),
+            );
+            return;
+        }
+        save_background_change(window_handle, cx, move |content, _| {
+            let background = content.background.get_or_insert_default();
+            background.image_path = Some(image_path);
+            background.enabled = Some(true);
+        })
+        .await;
+    })
+    .detach();
+}
+
+fn background_action(
     window: &mut gpui::Window,
     cx: &mut App,
     change: impl FnOnce(&mut SettingsContent, &App) + Send + 'static,
 ) {
     let window_handle = window.window_handle();
-    let completion =
-        settings::update_settings_file_with_completion(<dyn fs::Fs>::global(cx), cx, change);
-    cx.spawn(async move |cx| match completion.await {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => show_background_error(
-            window_handle,
-            cx,
-            format!("Could not save background settings: {error:#}"),
-        ),
-        Err(error) => show_background_error(
-            window_handle,
-            cx,
-            format!("Could not save background settings: {error}"),
-        ),
-    })
-    .detach();
+    cx.spawn(async move |cx| save_background_change(window_handle, cx, change).await)
+        .detach();
 }
 
-fn background_page(cx: &App) -> SettingsPage {
-    let mut items = vec![
-        SettingsPageItem::SectionHeader("Background Range"),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Apply Background To",
-            description: "Window: one continuous image across Zed. Editor: editing area only. Custom: choose areas below.",
+macro_rules! background_setting {
+    ($title:literal, $description:literal, $field:ident) => {
+        SettingItem {
+            title: $title,
+            description: $description,
             field: Box::new(SettingField {
                 organization_override: None,
-                json_path: Some("background.scope"),
-                pick: |content| content.background.as_ref()?.scope.as_ref(),
+                json_path: Some(concat!("background.", stringify!($field))),
+                pick: |content| content.background.as_ref()?.$field.as_ref(),
                 write: |content, value, _| {
-                    content.background.get_or_insert_default().scope = value;
+                    content.background.get_or_insert_default().$field = value;
                 },
             }),
             metadata: None,
             files: USER,
-        }),
+        }
+    };
+}
+
+fn background_page() -> SettingsPage {
+    let coverage = DynamicItem {
+        discriminant: background_setting!(
+            "Apply Background To",
+            "Window: one continuous image behind all of Zed. Editor: editing area only. Custom: pick each area.",
+            scope
+        ),
+        pick_discriminant: |content| Some(content.background.as_ref()?.scope? as usize),
+        fields: settings::BackgroundScope::VARIANTS
+            .iter()
+            .map(|scope| match scope {
+                settings::BackgroundScope::Window | settings::BackgroundScope::Editor => Vec::new(),
+                settings::BackgroundScope::Custom => vec![
+                    background_setting!("Editor", "Code and text editing area.", editor),
+                    background_setting!(
+                        "Side Panels",
+                        "Files, Git, outline, and other utility panels.",
+                        panels
+                    ),
+                    background_setting!(
+                        "AI Assistant",
+                        "AI conversations and the agent panel.",
+                        assistant
+                    ),
+                    background_setting!("Terminal", "Terminal panel and terminal tabs.", terminal),
+                    background_setting!(
+                        "Window Bars",
+                        "Title bar, tab bar, toolbar, and status bar.",
+                        chrome
+                    ),
+                ],
+            })
+            .collect(),
+    };
+
+    let items = vec![
         SettingsPageItem::SectionHeader("Image"),
-        SettingsPageItem::SubPageLink(SubPageLink {
-            title: "Background Preview".into(),
-            r#type: Default::default(),
-            description: Some("Preview the image and editor composition.".into()),
-            search_aliases: &[],
-            json_path: None,
-            in_json: false,
-            files: USER,
-            render: crate::pages::render_background_preview,
-        }),
+        SettingsPageItem::SettingItem(background_setting!(
+            "Show Background",
+            "Display the background image. Choosing an image turns this on; removing it turns it off.",
+            enabled
+        )),
         SettingsPageItem::ActionLink(ActionLink {
-            title: "Select / Change Image".into(),
-            description: Some("Choose a PNG, JPEG, or WebP image.".into()),
-            button_text: "Select / Change Image".into(),
-            on_click: Arc::new(|_, window, cx| {
-                let window_handle = window.window_handle();
-                let prompt = cx.prompt_for_paths(PathPromptOptions {
-                    files: true,
-                    directories: false,
-                    multiple: false,
-                    prompt: Some("Select background image".into()),
-                });
-                cx.spawn(async move |cx| {
-                    let path = match prompt.await {
-                        Ok(Ok(Some(paths))) => paths.into_iter().next(),
-                        Ok(Ok(None)) => None,
-                        Ok(Err(error)) => {
-                            show_background_error(
-                                window_handle,
-                                cx,
-                                format!("Could not open image picker: {error:#}"),
-                            );
-                            None
-                        }
-                        Err(error) => {
-                            show_background_error(
-                                window_handle,
-                                cx,
-                                format!("Image picker failed: {error}"),
-                            );
-                            None
-                        }
-                    };
-                    let Some(path) = path else { return };
-                    let supported = path.extension().is_some_and(|extension| {
-                        matches!(
-                            extension.to_str().map(str::to_ascii_lowercase).as_deref(),
-                            Some("png" | "jpg" | "jpeg" | "webp")
-                        )
-                    });
-                    if !supported {
-                        show_background_error(
-                            window_handle,
-                            cx,
-                            "Select a PNG, JPEG, or WebP image.".into(),
-                        );
-                        return;
-                    }
-                    let image_path_to_validate = path.clone();
-                    let validation = cx
-                        .background_spawn(async move {
-                            image::ImageReader::open(image_path_to_validate)
-                                .map_err(anyhow::Error::from)?
-                                .decode()
-                                .map_err(anyhow::Error::from)
-                        })
-                        .await;
-                    if let Err(error) = validation {
-                        show_background_error(
-                            window_handle,
-                            cx,
-                            format!("Could not load image: {error:#}"),
-                        );
-                        return;
-                    }
-                    let Some(image_path) = path.to_str().map(str::to_owned) else {
-                        show_background_error(
-                            window_handle,
-                            cx,
-                            "The image path must use valid Unicode characters.".into(),
-                        );
-                        return;
-                    };
-                    let completion = cx.update(|cx| {
-                        settings::update_settings_file_with_completion(
-                            <dyn fs::Fs>::global(cx),
-                            cx,
-                            move |content, _| {
-                                let background = content.background.get_or_insert_default();
-                                background.image_path = Some(image_path);
-                                background.enabled = Some(true);
-                            },
-                        )
-                    });
-                    match completion.await {
-                        Ok(Ok(())) => {}
-                        Ok(Err(error)) => show_background_error(
-                            window_handle,
-                            cx,
-                            format!("Could not save background image: {error:#}"),
-                        ),
-                        Err(error) => show_background_error(
-                            window_handle,
-                            cx,
-                            format!("Could not save background image: {error}"),
-                        ),
-                    }
-                })
-                .detach();
-            }),
+            title: "Image File".into(),
+            description: Some("PNG, JPEG, or WebP.".into()),
+            button_text: "Choose Image…".into(),
+            on_click: Arc::new(|_, window, cx| choose_background_image(window, cx)),
             files: USER,
         }),
         SettingsPageItem::ActionLink(ActionLink {
             title: "Remove Image".into(),
-            description: Some("Clear the selected background image.".into()),
-            button_text: "Remove Image".into(),
+            description: Some("Clear the image and hide the background.".into()),
+            button_text: "Remove".into(),
             on_click: Arc::new(|_, window, cx| {
-                save_background_change(window, cx, |content, _| {
+                background_action(window, cx, |content, _| {
                     let background = content.background.get_or_insert_default();
                     background.image_path = None;
                     background.enabled = Some(false);
@@ -266,241 +285,71 @@ fn background_page(cx: &App) -> SettingsPage {
             }),
             files: USER,
         }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Preview".into(),
+            r#type: Default::default(),
+            description: Some("See the image behind a sample editor.".into()),
+            search_aliases: &[],
+            json_path: None,
+            in_json: false,
+            files: USER,
+            render: crate::pages::render_background_preview,
+        }),
+        SettingsPageItem::SectionHeader("Coverage"),
+        SettingsPageItem::DynamicItem(coverage),
+        SettingsPageItem::SectionHeader("Image Adjustments"),
+        SettingsPageItem::SettingItem(background_setting!(
+            "Fit",
+            "Cover fills the area and may crop; Contain shows the whole image; Stretch ignores the aspect ratio.",
+            size
+        )),
+        SettingsPageItem::SettingItem(background_setting!(
+            "Position",
+            "Which part of the image stays visible when it is cropped.",
+            position
+        )),
+        SettingsPageItem::SettingItem(background_setting!(
+            "Image Opacity",
+            "How strongly the image shows through, from 0 to 100%.",
+            image_opacity
+        )),
+        SettingsPageItem::SettingItem(background_setting!(
+            "Blur",
+            "Blur radius, from 0 to 30 pixels.",
+            blur
+        )),
+        SettingsPageItem::SettingItem(background_setting!(
+            "Darken",
+            "Black overlay on the image, from 0 to 100%.",
+            overlay_opacity
+        )),
+        SettingsPageItem::SectionHeader("Readability"),
+        SettingsPageItem::SettingItem(background_setting!(
+            "Theme Tint",
+            "Theme background color laid over the image. Higher values keep text easier to read.",
+            editor_opacity
+        )),
+        SettingsPageItem::SettingItem(background_setting!(
+            "Gutter & Tab Opacity",
+            "Opacity of line-number gutters and file or terminal tabs.",
+            surface_opacity
+        )),
+        SettingsPageItem::SettingItem(background_setting!(
+            "AI Message Opacity",
+            "Opacity of AI conversation message backgrounds.",
+            message_opacity
+        )),
+        SettingsPageItem::SectionHeader("Reset"),
         SettingsPageItem::ActionLink(ActionLink {
-            title: "Reset to Default".into(),
-            description: Some("Restore default background settings.".into()),
+            title: "Reset Background Settings".into(),
+            description: Some("Restore every background setting to its default.".into()),
             button_text: "Reset".into(),
             on_click: Arc::new(|_, window, cx| {
-                save_background_change(window, cx, |content, _| {
-                    content.background = None;
-                });
+                background_action(window, cx, |content, _| content.background = None);
             }),
-            files: USER,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Enable Background",
-            description: "Show the selected image behind the editor.",
-            field: Box::new(SettingField {
-                organization_override: None,
-                json_path: Some("background.enabled"),
-                pick: |content| content.background.as_ref()?.enabled.as_ref(),
-                write: |content, value, _| {
-                    content.background.get_or_insert_default().enabled = value;
-                },
-            }),
-            metadata: None,
-            files: USER,
-        }),
-        SettingsPageItem::SectionHeader("Appearance"),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Image Opacity",
-            description: "Visibility of the image, from 0 to 100%.",
-            field: Box::new(SettingField {
-                organization_override: None,
-                json_path: Some("background.image_opacity"),
-                pick: |content| content.background.as_ref()?.image_opacity.as_ref(),
-                write: |content, value, _| {
-                    content.background.get_or_insert_default().image_opacity =
-                        value.map(|value: f32| value.clamp(0.0, 1.0));
-                },
-            }),
-            metadata: None,
-            files: USER,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Surface Tint",
-            description: "Higher values make the image less visible behind selected areas. Text stays opaque.",
-            field: Box::new(SettingField {
-                organization_override: None,
-                json_path: Some("background.editor_opacity"),
-                pick: |content| content.background.as_ref()?.editor_opacity.as_ref(),
-                write: |content, value, _| {
-                    content.background.get_or_insert_default().editor_opacity =
-                        value.map(|value: f32| value.clamp(0.0, 1.0));
-                },
-            }),
-            metadata: None,
-            files: USER,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Background Blur",
-            description: "Blur radius from 0 to 30 pixels.",
-            field: Box::new(SettingField {
-                organization_override: None,
-                json_path: Some("background.blur"),
-                pick: |content| content.background.as_ref()?.blur.as_ref(),
-                write: |content, value, _| {
-                    content.background.get_or_insert_default().blur =
-                        value.map(|value: f32| value.clamp(0.0, 30.0));
-                },
-            }),
-            metadata: None,
-            files: USER,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Overlay Opacity",
-            description: "Darken the image, from 0 to 100%.",
-            field: Box::new(SettingField {
-                organization_override: None,
-                json_path: Some("background.overlay_opacity"),
-                pick: |content| content.background.as_ref()?.overlay_opacity.as_ref(),
-                write: |content, value, _| {
-                    content.background.get_or_insert_default().overlay_opacity =
-                        value.map(|value: f32| value.clamp(0.0, 1.0));
-                },
-            }),
-            metadata: None,
-            files: USER,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Surface Opacity",
-            description: "Opacity of line number backgrounds and file or terminal tabs over the background image.",
-            field: Box::new(SettingField {
-                organization_override: None,
-                json_path: Some("background.surface_opacity"),
-                pick: |content| content.background.as_ref()?.surface_opacity.as_ref(),
-                write: |content, value, _| {
-                    content.background.get_or_insert_default().surface_opacity =
-                        value.map(|value: f32| value.clamp(0.0, 1.0));
-                },
-            }),
-            metadata: None,
-            files: USER,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Message Opacity",
-            description: "Opacity of AI conversation message backgrounds, from 0 to 100%.",
-            field: Box::new(SettingField {
-                organization_override: None,
-                json_path: Some("background.message_opacity"),
-                pick: |content| content.background.as_ref()?.message_opacity.as_ref(),
-                write: |content, value, _| {
-                    content.background.get_or_insert_default().message_opacity =
-                        value.map(|value: f32| value.clamp(0.0, 1.0));
-                },
-            }),
-            metadata: None,
-            files: USER,
-        }),
-        SettingsPageItem::SectionHeader("Image Layout"),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Background Size",
-            description: "How to fit the image within the editor.",
-            field: Box::new(SettingField {
-                organization_override: None,
-                json_path: Some("background.size"),
-                pick: |content| content.background.as_ref()?.size.as_ref(),
-                write: |content, value, _| {
-                    content.background.get_or_insert_default().size = value;
-                },
-            }),
-            metadata: None,
-            files: USER,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Background Position",
-            description: "Where to anchor the image within the editor.",
-            field: Box::new(SettingField {
-                organization_override: None,
-                json_path: Some("background.position"),
-                pick: |content| content.background.as_ref()?.position.as_ref(),
-                write: |content, value, _| {
-                    content.background.get_or_insert_default().position = value;
-                },
-            }),
-            metadata: None,
             files: USER,
         }),
     ];
-    if let Some(index) = items.iter().position(|item| matches!(item, SettingsPageItem::SettingItem(item) if item.title == "Enable Background")) {
-        let enabled = items.remove(index);
-        items.insert(1, enabled);
-    }
-    if let Some(index) = items.iter().position(|item| matches!(item, SettingsPageItem::ActionLink(item) if item.title.as_ref() == "Reset to Default")) {
-        let reset = items.remove(index);
-        items.push(reset);
-    }
-    if settings::SettingsStore::global(cx)
-        .merged_settings()
-        .background
-        .as_ref()
-        .is_some_and(|background| background.scope == Some(settings::BackgroundScope::Custom))
-    {
-        let custom = vec![
-            SettingsPageItem::SectionHeader("Custom Areas"),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Editor",
-                description: "Code and text editing area.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("background.editor"),
-                    pick: |content| content.background.as_ref()?.editor.as_ref(),
-                    write: |content, value, _| {
-                        content.background.get_or_insert_default().editor = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Side Panels",
-                description: "Files, Git, outline, and other utility panels.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("background.panels"),
-                    pick: |content| content.background.as_ref()?.panels.as_ref(),
-                    write: |content, value, _| {
-                        content.background.get_or_insert_default().panels = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "AI Assistant",
-                description: "AI conversations and agent panel.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("background.assistant"),
-                    pick: |content| content.background.as_ref()?.assistant.as_ref(),
-                    write: |content, value, _| {
-                        content.background.get_or_insert_default().assistant = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Terminal",
-                description: "Terminal panel and terminal tabs.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("background.terminal"),
-                    pick: |content| content.background.as_ref()?.terminal.as_ref(),
-                    write: |content, value, _| {
-                        content.background.get_or_insert_default().terminal = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Window Bars",
-                description: "Title bar, editor tab bar, toolbar, and status bar.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("background.chrome"),
-                    pick: |content| content.background.as_ref()?.chrome.as_ref(),
-                    write: |content, value, _| {
-                        content.background.get_or_insert_default().chrome = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-        ];
-        items.splice(3..3, custom);
-    }
     SettingsPage {
         title: "Background",
         items: items.into_boxed_slice(),

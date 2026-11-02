@@ -280,3 +280,49 @@ fn updating_patch_preserves_source_and_rejects_applied_or_duplicate_versions() -
     assert_eq!(first(&service)?.compatibility, Compatibility::Compatible);
     Ok(())
 }
+
+#[test]
+fn header_detection_ignores_hunk_content() {
+    assert!(is_unsupported_header("new file mode 120000"));
+    assert!(is_unsupported_header("index 1234567..89abcde 160000"));
+    assert!(is_unsupported_header("GIT binary patch"));
+    assert!(!is_unsupported_header("+    // new file mode 120000"));
+    assert!(!is_unsupported_header("new file mode 100644"));
+    assert!(!is_unsupported_header("index 1234567..89abcde 100644"));
+}
+
+#[test]
+fn hunks_mentioning_special_modes_are_text_changes() -> Result<()> {
+    let (_directory, service) = checkout()?;
+    register(&service, &PATCH.replace("+after", "+mode 120000"))?;
+    assert_eq!(first(&service)?.compatibility, Compatibility::Compatible);
+    Ok(())
+}
+
+#[test]
+fn renames_report_both_paths() -> Result<()> {
+    let (_directory, service) = checkout()?;
+    register(
+        &service,
+        "diff --git a/example.txt b/renamed.txt\nsimilarity index 100%\nrename from example.txt\nrename to renamed.txt\n",
+    )?;
+    let state = first(&service)?;
+    assert_eq!(state.compatibility, Compatibility::Compatible);
+    assert_eq!(state.affected_files, ["example.txt", "renamed.txt"]);
+    assert!(
+        register(
+            &service,
+            "diff --git a/example.txt b/patches/x.txt\nsimilarity index 100%\nrename from example.txt\nrename to patches/x.txt\n",
+        )
+        .is_err()
+    );
+    let (_directory, service) = checkout()?;
+    assert!(
+        register(
+            &service,
+            "diff --git a/patches/manifest.json b/moved.json\nsimilarity index 100%\nrename from patches/manifest.json\nrename to moved.json\n",
+        )
+        .is_err()
+    );
+    Ok(())
+}

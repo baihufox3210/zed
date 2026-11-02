@@ -1835,22 +1835,8 @@ impl SettingsWindow {
         .detach();
 
         let mut ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
-        let mut background_scope = SettingsStore::global(cx)
-            .merged_settings()
-            .background
-            .as_ref()
-            .and_then(|background| background.scope);
         cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
             this.fetch_files(window, cx);
-            let new_scope = SettingsStore::global(cx)
-                .merged_settings()
-                .background
-                .as_ref()
-                .and_then(|background| background.scope);
-            if new_scope != background_scope {
-                background_scope = new_scope;
-                this.rebuild_pages(window, cx);
-            }
 
             // Whenever settings are changed, it's possible that the changed
             // settings affects the rendering of the `SettingsWindow`, like is
@@ -5164,6 +5150,20 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
         .into_any_element()
 }
 
+/// Background values are fractions stored in 0..=1 (shown as percentages) except
+/// blur, which is stored in pixels.
+fn background_slider_range(json_path: &str) -> Option<(f32, &'static str)> {
+    match json_path {
+        "background.blur" => Some((30.0, "px")),
+        "background.image_opacity"
+        | "background.editor_opacity"
+        | "background.overlay_opacity"
+        | "background.surface_opacity"
+        | "background.message_opacity" => Some((1.0, "%")),
+        _ => None,
+    }
+}
+
 fn render_background_number_field(
     field: SettingField<f32>,
     file: SettingsUiFile,
@@ -5173,16 +5173,8 @@ fn render_background_number_field(
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    if !field
-        .json_path
-        .is_some_and(|path| path.starts_with("background."))
-    {
+    let Some((maximum, unit)) = field.json_path.and_then(background_slider_range) else {
         return render_editable_number_field(field, file, metadata, title, description, window, cx);
-    }
-    let maximum = if field.json_path == Some("background.blur") {
-        30.0
-    } else {
-        1.0
     };
     let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
     let value = value.copied().unwrap_or(0.0).clamp(0.0, maximum);
@@ -5282,7 +5274,7 @@ fn render_background_number_field(
                 }),
         )
         .child(numeric)
-        .child(Label::new(if maximum == 1.0 { "%" } else { "px" }))
+        .child(Label::new(unit))
         .into_any_element()
 }
 

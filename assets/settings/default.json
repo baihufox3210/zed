@@ -1,19 +1,23 @@
 {
   "$schema": "zed://schemas/settings",
   "background": {
+    // Image
+    "enabled": false,
+    // Coverage: "window", "editor", or "custom" (uses the area switches below).
     "scope": "window",
     "editor": true,
     "panels": true,
     "assistant": true,
     "terminal": true,
     "chrome": true,
-    "enabled": false,
-    "image_opacity": 1.0,
-    "editor_opacity": 0.8,
-    "blur": 0.0,
+    // Image adjustments
     "size": "cover",
     "position": "center",
+    "image_opacity": 1.0,
+    "blur": 0.0,
     "overlay_opacity": 0.0,
+    // Readability
+    "editor_opacity": 0.8,
     "surface_opacity": 0.25,
     "message_opacity": 0.8
   },

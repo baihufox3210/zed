@@ -2,10 +2,21 @@ use anyhow::{Context as _, Result, bail, ensure};
 use patch_manager::{Compatibility, Patch, PatchService};
 use std::path::Path;
 
+const USAGE: &str = "Usage:
+  zed-patch <checkout> list|validate
+  zed-patch <checkout> enable|disable <id>
+  zed-patch <checkout> apply|revert|remove <id> --confirm-source-change
+  zed-patch <checkout> register <file.patch> <metadata.json>
+  zed-patch <checkout> update <id> <replacement.patch>";
+
 fn main() -> Result<()> {
     let mut arguments = std::env::args().skip(1);
-    let root = arguments.next().context("Usage: zed-patch <checkout> <list|validate|enable|disable|apply|revert|remove|register|update> [id] [--confirm-source-change]")?;
-    let operation = arguments.next().context("Missing operation")?;
+    let root = arguments.next().context(USAGE)?;
+    if root == "--help" || root == "-h" {
+        println!("{USAGE}");
+        return Ok(());
+    }
+    let operation = arguments.next().context(USAGE)?;
     let service = PatchService::open(Path::new(&root))?;
     if operation == "list" || operation == "validate" {
         let states = service.list()?;
@@ -55,7 +66,7 @@ fn main() -> Result<()> {
                 _ => service.remove(&id)?,
             }
         }
-        _ => bail!("Unknown operation: {operation}"),
+        _ => bail!("Unknown operation: {operation}\n{USAGE}"),
     }
     println!("{}", serde_json::to_string_pretty(&service.list()?)?);
     Ok(())
