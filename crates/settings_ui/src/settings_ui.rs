@@ -5189,7 +5189,7 @@ fn render_background_number_field(
     let scale = if maximum == 1.0 { 100.0 } else { 1.0 };
     let numeric = NumberField::new(
         format!("background-value-{title}"),
-        value * scale,
+        (value * scale * 100.0).round() / 100.0,
         window,
         cx,
     )
@@ -5199,7 +5199,7 @@ fn render_background_number_field(
     .on_change({
         let file = file.clone();
         move |value, window, cx| {
-            let value = (*value / scale).clamp(0.0, maximum);
+            let value = ((*value / scale).clamp(0.0, maximum) * 100.0).round() / 100.0;
             update_settings_file(
                 file.clone(),
                 field.json_path,

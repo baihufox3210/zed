@@ -376,12 +376,17 @@ pub struct BackgroundSettingsContent {
     pub chrome: Option<bool>,
     pub enabled: Option<bool>,
     pub image_path: Option<String>,
+    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
     pub image_opacity: Option<f32>,
+    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
     pub editor_opacity: Option<f32>,
+    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
     pub blur: Option<f32>,
     pub size: Option<BackgroundSize>,
     pub position: Option<BackgroundPosition>,
+    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
     pub overlay_opacity: Option<f32>,
+    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
     pub surface_opacity: Option<f32>,
 }
 
