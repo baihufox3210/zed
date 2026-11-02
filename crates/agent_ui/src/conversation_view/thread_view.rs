@@ -7248,6 +7248,15 @@ impl ThreadView {
         )
         .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
         .flex_grow_1()
+        .when(
+            settings::background::includes(settings::background::Region::Assistant, cx),
+            |this| {
+                this.bg(settings::background::message_color(
+                    cx.theme().colors().editor_background,
+                    cx,
+                ))
+            },
+        )
     }
 
     fn render_entry(
@@ -7657,22 +7666,6 @@ impl ThreadView {
                         .w_px()
                         .bg(cx.theme().colors().border.opacity(0.6)),
                 )
-                .child(primary)
-                .into_any_element()
-        } else {
-            primary
-        };
-
-        let primary = if matches!(entry, AgentThreadEntry::AssistantMessage(_))
-            && settings::background::includes(settings::background::Region::Assistant, cx)
-        {
-            div()
-                .w_full()
-                .rounded_md()
-                .bg(settings::background::message_color(
-                    cx.theme().colors().editor_background,
-                    cx,
-                ))
                 .child(primary)
                 .into_any_element()
         } else {
