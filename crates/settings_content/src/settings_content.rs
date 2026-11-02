@@ -184,6 +184,8 @@ pub struct SettingsContent {
     #[serde(flatten)]
     pub workspace: WorkspaceSettingsContent,
 
+    pub background: Option<BackgroundSettingsContent>,
+
     #[serde(flatten)]
     pub editor: EditorSettingsContent,
 
@@ -337,6 +339,74 @@ pub struct SettingsContent {
     pub instrumentation: Option<InstrumentationSettingsContent>,
 }
 
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct BackgroundSettingsContent {
+    pub enabled: Option<bool>,
+    pub image_path: Option<String>,
+    pub image_opacity: Option<f32>,
+    pub editor_opacity: Option<f32>,
+    pub blur: Option<f32>,
+    pub size: Option<BackgroundSize>,
+    pub position: Option<BackgroundPosition>,
+    pub overlay_opacity: Option<f32>,
+}
+
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum BackgroundSize {
+    #[default]
+    Cover,
+    Contain,
+    Stretch,
+}
+
+impl crate::merge_from::MergeFrom for BackgroundSize {
+    fn merge_from(&mut self, other: &Self) {
+        *self = *other;
+    }
+}
+
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum BackgroundPosition {
+    #[default]
+    Center,
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+impl crate::merge_from::MergeFrom for BackgroundPosition {
+    fn merge_from(&mut self, other: &Self) {
+        *self = *other;
+    }
+}
+
 /// Configuration for developer-oriented instrumentation tools that collect
 /// diagnostic data about a running Zed instance.
 #[with_fallible_options]
@@ -405,7 +475,7 @@ impl SettingsContent {
 fallible_options::flattened_deserialize!(SettingsContent {
     sections: { project, theme, extension, workspace, editor, remote },
     options: {
-        call_hierarchy, command_palette, file_finder, git_panel, tabs, tab_bar, tab_switcher, status_bar, preview_tabs, agent,
+        background, call_hierarchy, command_palette, file_finder, git_panel, tabs, tab_bar, tab_switcher, status_bar, preview_tabs, agent,
         agent_servers, audio, auto_update, base_keymap, collaboration_panel, debugger, diagnostics,
         git,
         global_lsp_settings, image_viewer, markdown_preview, repl, helix_mode, hide_mouse,

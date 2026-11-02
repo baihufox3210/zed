@@ -1,4 +1,4 @@
-use gpui::{Action as _, App};
+use gpui::{Action as _, App, AppContext as _, PathPromptOptions};
 use itertools::Itertools as _;
 use settings::{
     AudioInputDeviceName, AudioOutputDeviceName, EditPredictionDataCollectionChoice,
@@ -8,6 +8,7 @@ use std::sync::{Arc, OnceLock};
 use strum::{EnumMessage, IntoDiscriminant as _, VariantArray};
 use theme::SystemAppearance;
 use ui::IntoElement;
+use util::ResultExt as _;
 
 use crate::{
     ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
@@ -66,6 +67,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
     vec![
         general_page(cx),
         appearance_page(),
+        background_page(),
         keymap_page(),
         editor_page(),
         languages_and_tools_page(cx),
@@ -80,6 +82,306 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
         network_page(),
         developer_page(cx),
     ]
+}
+
+fn show_background_error(window: gpui::AnyWindowHandle, cx: &mut gpui::AsyncApp, message: String) {
+    window
+        .update(cx, |_, window, cx| {
+            drop(window.prompt(
+                gpui::PromptLevel::Critical,
+                "Background image error",
+                Some(&message),
+                &["OK"],
+                cx,
+            ));
+        })
+        .log_err();
+}
+
+fn save_background_change(
+    window: &mut gpui::Window,
+    cx: &mut App,
+    change: impl FnOnce(&mut SettingsContent, &App) + Send + 'static,
+) {
+    let window_handle = window.window_handle();
+    let completion =
+        settings::update_settings_file_with_completion(<dyn fs::Fs>::global(cx), cx, change);
+    cx.spawn(async move |cx| match completion.await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => show_background_error(
+            window_handle,
+            cx,
+            format!("Could not save background settings: {error:#}"),
+        ),
+        Err(error) => show_background_error(
+            window_handle,
+            cx,
+            format!("Could not save background settings: {error}"),
+        ),
+    })
+    .detach();
+}
+
+fn background_page() -> SettingsPage {
+    let items = vec![
+        SettingsPageItem::SectionHeader("Background"),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Background Preview".into(),
+            r#type: Default::default(),
+            description: Some("Preview the image and editor composition.".into()),
+            search_aliases: &[],
+            json_path: None,
+            in_json: false,
+            files: USER,
+            render: crate::pages::render_background_preview,
+        }),
+        SettingsPageItem::ActionLink(ActionLink {
+            title: "Select / Change Image".into(),
+            description: Some("Choose a PNG, JPEG, or WebP image.".into()),
+            button_text: "Select / Change Image".into(),
+            on_click: Arc::new(|_, window, cx| {
+                let window_handle = window.window_handle();
+                let prompt = cx.prompt_for_paths(PathPromptOptions {
+                    files: true,
+                    directories: false,
+                    multiple: false,
+                    prompt: Some("Select background image".into()),
+                });
+                cx.spawn(async move |cx| {
+                    let path = match prompt.await {
+                        Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                        Ok(Ok(None)) => None,
+                        Ok(Err(error)) => {
+                            show_background_error(
+                                window_handle,
+                                cx,
+                                format!("Could not open image picker: {error:#}"),
+                            );
+                            None
+                        }
+                        Err(error) => {
+                            show_background_error(
+                                window_handle,
+                                cx,
+                                format!("Image picker failed: {error}"),
+                            );
+                            None
+                        }
+                    };
+                    let Some(path) = path else { return };
+                    let supported = path.extension().is_some_and(|extension| {
+                        matches!(
+                            extension.to_str().map(str::to_ascii_lowercase).as_deref(),
+                            Some("png" | "jpg" | "jpeg" | "webp")
+                        )
+                    });
+                    if !supported {
+                        show_background_error(
+                            window_handle,
+                            cx,
+                            "Select a PNG, JPEG, or WebP image.".into(),
+                        );
+                        return;
+                    }
+                    let image_path_to_validate = path.clone();
+                    let validation = cx
+                        .background_spawn(async move {
+                            image::ImageReader::open(image_path_to_validate)
+                                .map_err(anyhow::Error::from)?
+                                .decode()
+                                .map_err(anyhow::Error::from)
+                        })
+                        .await;
+                    if let Err(error) = validation {
+                        show_background_error(
+                            window_handle,
+                            cx,
+                            format!("Could not load image: {error:#}"),
+                        );
+                        return;
+                    }
+                    let Some(image_path) = path.to_str().map(str::to_owned) else {
+                        show_background_error(
+                            window_handle,
+                            cx,
+                            "The image path must use valid Unicode characters.".into(),
+                        );
+                        return;
+                    };
+                    let completion = cx.update(|cx| {
+                        settings::update_settings_file_with_completion(
+                            <dyn fs::Fs>::global(cx),
+                            cx,
+                            move |content, _| {
+                                let background = content.background.get_or_insert_default();
+                                background.image_path = Some(image_path);
+                                background.enabled = Some(true);
+                            },
+                        )
+                    });
+                    match completion.await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => show_background_error(
+                            window_handle,
+                            cx,
+                            format!("Could not save background image: {error:#}"),
+                        ),
+                        Err(error) => show_background_error(
+                            window_handle,
+                            cx,
+                            format!("Could not save background image: {error}"),
+                        ),
+                    }
+                })
+                .detach();
+            }),
+            files: USER,
+        }),
+        SettingsPageItem::ActionLink(ActionLink {
+            title: "Remove Image".into(),
+            description: Some("Clear the selected background image.".into()),
+            button_text: "Remove Image".into(),
+            on_click: Arc::new(|_, window, cx| {
+                save_background_change(window, cx, |content, _| {
+                    let background = content.background.get_or_insert_default();
+                    background.image_path = None;
+                    background.enabled = Some(false);
+                });
+            }),
+            files: USER,
+        }),
+        SettingsPageItem::ActionLink(ActionLink {
+            title: "Reset to Default".into(),
+            description: Some("Restore default background settings.".into()),
+            button_text: "Reset".into(),
+            on_click: Arc::new(|_, window, cx| {
+                save_background_change(window, cx, |content, _| {
+                    content.background = None;
+                });
+            }),
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Enable Background",
+            description: "Show the selected image behind the editor.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                json_path: Some("background.enabled"),
+                pick: |content| content.background.as_ref()?.enabled.as_ref(),
+                write: |content, value, _| {
+                    content.background.get_or_insert_default().enabled = value;
+                },
+            }),
+            metadata: None,
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Image Path",
+            description: "Path to a PNG, JPEG, or WebP image.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                json_path: Some("background.image_path"),
+                pick: |content| content.background.as_ref()?.image_path.as_ref(),
+                write: |content, value, _| {
+                    content.background.get_or_insert_default().image_path = value;
+                },
+            }),
+            metadata: None,
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Image Opacity",
+            description: "Image opacity from 0 to 1.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                json_path: Some("background.image_opacity"),
+                pick: |content| content.background.as_ref()?.image_opacity.as_ref(),
+                write: |content, value, _| {
+                    content.background.get_or_insert_default().image_opacity =
+                        value.map(|value: f32| value.clamp(0.0, 1.0));
+                },
+            }),
+            metadata: None,
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Editor Opacity",
+            description: "Editor background opacity from 0 to 1.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                json_path: Some("background.editor_opacity"),
+                pick: |content| content.background.as_ref()?.editor_opacity.as_ref(),
+                write: |content, value, _| {
+                    content.background.get_or_insert_default().editor_opacity =
+                        value.map(|value: f32| value.clamp(0.0, 1.0));
+                },
+            }),
+            metadata: None,
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Background Blur",
+            description: "Blur radius from 0 to 30 pixels.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                json_path: Some("background.blur"),
+                pick: |content| content.background.as_ref()?.blur.as_ref(),
+                write: |content, value, _| {
+                    content.background.get_or_insert_default().blur =
+                        value.map(|value: f32| value.clamp(0.0, 30.0));
+                },
+            }),
+            metadata: None,
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Overlay Opacity",
+            description: "Overlay opacity from 0 to 1.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                json_path: Some("background.overlay_opacity"),
+                pick: |content| content.background.as_ref()?.overlay_opacity.as_ref(),
+                write: |content, value, _| {
+                    content.background.get_or_insert_default().overlay_opacity =
+                        value.map(|value: f32| value.clamp(0.0, 1.0));
+                },
+            }),
+            metadata: None,
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Background Size",
+            description: "How to fit the image within the editor.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                json_path: Some("background.size"),
+                pick: |content| content.background.as_ref()?.size.as_ref(),
+                write: |content, value, _| {
+                    content.background.get_or_insert_default().size = value;
+                },
+            }),
+            metadata: None,
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Background Position",
+            description: "Where to anchor the image within the editor.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                json_path: Some("background.position"),
+                pick: |content| content.background.as_ref()?.position.as_ref(),
+                write: |content, value, _| {
+                    content.background.get_or_insert_default().position = value;
+                },
+            }),
+            metadata: None,
+            files: USER,
+        }),
+    ];
+    SettingsPage {
+        title: "Background",
+        items: items.into_boxed_slice(),
+    }
 }
 
 fn developer_page(cx: &App) -> SettingsPage {

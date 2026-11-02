@@ -67,6 +67,7 @@ enum Filter {
 #[derive(Clone)]
 enum Operation {
     Refresh,
+    Update(String, PathBuf),
     Enable(String, bool),
     Apply(String),
     Revert(String),
@@ -77,6 +78,9 @@ enum Operation {
 impl Operation {
     fn completion(&self) -> &'static str {
         match self {
+            Self::Update(..) => {
+                "Patch source updated. Review and apply the new version separately."
+            }
             Self::Refresh => "Validation complete. Runtime state is unverified.",
             Self::Enable(..) => "Activation saved. Source application is a separate operation.",
             Self::Apply(_) => {
@@ -92,6 +96,7 @@ impl Operation {
 
     fn label(&self) -> &'static str {
         match self {
+            Self::Update(..) => "Validating replacement patch…",
             Self::Refresh => "Validating patches…",
             Self::Enable(..) => "Updating activation…",
             Self::Apply(_) => "Applying patch…",
@@ -205,6 +210,7 @@ impl PatchManagerPage {
                 }
             };
             let operation_result = match operation {
+                Operation::Update(id, path) => service.update(&id, &path),
                 Operation::Refresh => Ok(()),
                 Operation::Enable(id, enabled) => service.set_enabled(&id, enabled),
                 Operation::Apply(id) => service.apply(&id, false),
@@ -411,6 +417,35 @@ impl PatchManagerPage {
         .detach();
     }
 
+    fn choose_update(&mut self, id: String, cx: &mut Context<Self>) {
+        let prompt = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Select replacement .patch file".into()),
+        });
+        cx.spawn(async move |page, cx| {
+            let result = prompt.await;
+            page.update(cx, |page, cx| {
+                match result {
+                    Ok(Ok(Some(paths))) => {
+                        if let Some(path) = paths.into_iter().next() {
+                            page.run(Operation::Update(id, path), cx);
+                        }
+                    }
+                    Ok(Ok(None)) => {}
+                    Ok(Err(error)) => {
+                        page.error = Some(format!("Could not open patch picker: {error:#}"))
+                    }
+                    Err(error) => page.error = Some(error.to_string()),
+                }
+                cx.notify();
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
     fn render_detail(&self, state: &PatchState, cx: &mut Context<Self>) -> AnyElement {
         let patch = &state.patch;
         let id = patch.id.clone();
@@ -472,6 +507,14 @@ impl PatchManagerPage {
                             .on_click(
                                 cx.listener(|page, _, _, cx| page.run(Operation::Refresh, cx)),
                             ),
+                    )
+                    .child(
+                        Button::new("update", "Update Patch")
+                            .disabled(self.busy || state.compatibility != Compatibility::Compatible)
+                            .on_click(cx.listener({
+                                let id = id.clone();
+                                move |page, _, _, cx| page.choose_update(id.clone(), cx)
+                            })),
                     )
                     .child(
                         Button::new("diff", "View Diff")

@@ -326,6 +326,59 @@ impl PatchService {
         Ok(())
     }
 
+    pub fn update(&self, id: &str, source: &Path) -> Result<()> {
+        let _lock = self.lock()?;
+        let mut manifest = self.read_manifest()?;
+        let patch = manifest
+            .patches
+            .iter_mut()
+            .find(|patch| patch.id == id)
+            .context("Unknown patch ID")?;
+        ensure!(
+            self.state(patch.clone())?.compatibility == Compatibility::Compatible,
+            "Revert the applied patch and resolve conflicts before updating its source"
+        );
+        ensure!(
+            source
+                .extension()
+                .is_some_and(|extension| extension == "patch"),
+            "Select a .patch file"
+        );
+        ensure!(
+            fs::metadata(source)?.len() <= MAX_PATCH_SIZE,
+            "Patch exceeds 10 MiB"
+        );
+        let content = fs::read(source)?;
+        let destination = self.patch_path(patch)?;
+        let previous = fs::read(&destination)?;
+        ensure!(
+            content != previous,
+            "This patch version is already registered"
+        );
+        let mut temporary = tempfile::NamedTempFile::new_in(self.root.join("patches"))?;
+        temporary.write_all(&content)?;
+        self.affected_files(temporary.path())?;
+        let check = self.check(temporary.path(), false)?;
+        ensure!(
+            check.status.success(),
+            "Updated patch is incompatible: {}",
+            String::from_utf8_lossy(&check.stderr)
+        );
+        temporary.as_file().sync_all()?;
+        temporary.persist(&destination)?;
+        patch.sha256 = format!("{:x}", Sha256::digest(&content));
+        if let Err(error) = self.write_manifest(&manifest) {
+            let mut rollback = tempfile::NamedTempFile::new_in(self.root.join("patches"))?;
+            rollback.write_all(&previous)?;
+            rollback.as_file().sync_all()?;
+            rollback
+                .persist(&destination)
+                .context("Manifest update failed and patch rollback failed")?;
+            return Err(error);
+        }
+        Ok(())
+    }
+
     pub fn set_enabled(&self, id: &str, enabled: bool) -> Result<()> {
         let _lock = self.lock()?;
         let mut manifest = self.read_manifest()?;

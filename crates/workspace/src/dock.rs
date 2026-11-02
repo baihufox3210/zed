@@ -1339,11 +1339,19 @@ impl Render for Dock {
 
             div()
                 .id("dock-panel")
+                .relative()
+                .children(settings::background::render_surface(
+                    cx.theme().colors().panel_background,
+                    cx,
+                ))
                 .key_context(dispatch_context)
                 .track_focus(&self.focus_handle(cx))
                 .focus_follows_mouse(WorkspaceSettings::get_global(cx).focus_follows_mouse, cx)
                 .flex()
-                .bg(cx.theme().colors().panel_background)
+                .bg(settings::background::surface_color(
+                    cx.theme().colors().panel_background,
+                    cx,
+                ))
                 .border_color(cx.theme().colors().border)
                 .overflow_hidden()
                 .map(|this| match self.position().axis() {
@@ -1376,6 +1384,11 @@ impl Render for Dock {
         } else {
             div()
                 .id("dock-panel")
+                .relative()
+                .children(settings::background::render_surface(
+                    cx.theme().colors().panel_background,
+                    cx,
+                ))
                 .key_context(dispatch_context)
                 .track_focus(&self.focus_handle(cx))
         }

@@ -9782,7 +9782,10 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::activate_history_tab))
             .size_full()
             .overflow_hidden()
-            .bg(cx.theme().colors().panel_background)
+            .bg(settings::background::surface_color(
+                cx.theme().colors().panel_background,
+                cx,
+            ))
             .child(
                 v_flex()
                     .size_full()

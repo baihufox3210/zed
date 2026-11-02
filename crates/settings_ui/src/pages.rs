@@ -1,3 +1,5 @@
+mod background_preview;
+pub(crate) use background_preview::render_background_preview;
 mod audio_input_output_setup;
 mod audio_test_window;
 mod edit_prediction_provider_setup;

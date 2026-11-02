@@ -99,3 +99,19 @@ service Clippy checks, and formatting checks passed.
 Interactive verification is still needed for platform file pickers, light/dark
 appearance, narrow windows, font scaling, confirmation dialogs and live Wayland
 IME input.
+
+## Background settings
+
+Run **background: open settings** to choose a PNG, JPEG, or WebP image and adjust
+its composition with native controls. **Background Preview** renders a real
+Editor with the same image cache and settings. Sliders have numeric inputs for
+precise values. Settings are saved to the user's settings file automatically.
+
+The `native-background-settings` registration tracks the source patch separately
+from the runtime Enable Background switch. Reverting or applying source requires
+a rebuild and restart; changing background settings does not.
+
+**Update Patch** accepts a replacement local `.patch` for a compatible, unapplied
+registration. Revert the old version before updating. The replacement is checked
+against the checkout, hashed, and persisted without applying source changes.
+The CLI equivalent is `zed-patch <checkout> update <id> <replacement.patch>`.

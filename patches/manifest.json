@@ -9,6 +9,16 @@
       "sha256": "0b6e163596167f0c9023db159a9c296835d150d16e030f5b912811cfc0bfde05",
       "enabled": true,
       "rebuild_required": true
+    },
+    {
+      "id": "native-background-settings",
+      "name": "Native Background Settings",
+      "description": "Native background settings, image selection, editor composition and cached image blur. Rebuild and restart required after source application.",
+      "category": "Display",
+      "source": "patches/native-background-settings.patch",
+      "sha256": "9a575071e02b17a121dcc15f3f33bf70ac0803efd4ca28a832fb35ce3866c972",
+      "enabled": true,
+      "rebuild_required": true
     }
   ]
 }
