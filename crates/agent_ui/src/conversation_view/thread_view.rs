@@ -7769,6 +7769,26 @@ impl ThreadView {
             primary
         };
 
+        let primary =
+            if matches!(
+                entry,
+                AgentThreadEntry::UserMessage(_) | AgentThreadEntry::AssistantMessage(_)
+            ) && settings::background::includes(settings::background::Region::Assistant, cx)
+            {
+                div()
+                    .w_full()
+                    .rounded_md()
+                    .bg(settings::background::chrome_surface_color(
+                        cx.theme().colors().editor_background,
+                        settings::background::Region::Assistant,
+                        cx,
+                    ))
+                    .child(primary)
+                    .into_any_element()
+            } else {
+                primary
+            };
+
         let is_generating = matches!(thread.read(cx).status(), ThreadStatus::Generating);
 
         let is_turn_end = Self::entry_is_finalized_turn_end(thread.read(cx).entries(), entry_ix)
