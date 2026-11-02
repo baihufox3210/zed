@@ -314,7 +314,11 @@ impl EditorElement {
 
         Some(StickyHeaders {
             lines,
-            gutter_background: cx.theme().colors().editor_gutter_background,
+            gutter_background: settings::background::chrome_surface_color(
+                cx.theme().colors().editor_gutter_background,
+                settings::background::Region::Editor,
+                cx,
+            ),
             content_background: self.style.background,
             gutter_right_padding: gutter_dimensions.right_padding,
         })

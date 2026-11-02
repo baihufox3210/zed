@@ -352,6 +352,21 @@ fn background_page(cx: &App) -> SettingsPage {
             metadata: None,
             files: USER,
         }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Surface Opacity",
+            description: "Opacity of line number backgrounds and file or terminal tabs over the background image.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                json_path: Some("background.surface_opacity"),
+                pick: |content| content.background.as_ref()?.surface_opacity.as_ref(),
+                write: |content, value, _| {
+                    content.background.get_or_insert_default().surface_opacity =
+                        value.map(|value: f32| value.clamp(0.0, 1.0));
+                },
+            }),
+            metadata: None,
+            files: USER,
+        }),
         SettingsPageItem::SectionHeader("Image Layout"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Background Size",
