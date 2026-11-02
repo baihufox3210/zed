@@ -13,7 +13,8 @@
     "blur": 0.0,
     "size": "cover",
     "position": "center",
-    "overlay_opacity": 0.0
+    "overlay_opacity": 0.0,
+    "surface_opacity": 0.25
   },
   // The name of the Zed theme to use for the UI.
   //

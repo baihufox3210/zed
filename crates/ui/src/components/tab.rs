@@ -124,6 +124,11 @@ impl RenderOnce for Tab {
             ),
         };
 
+        let tab_bg = settings::background::chrome_surface_color(
+            tab_bg,
+            settings::background::Region::Chrome,
+            cx,
+        );
         let (start_slot, end_slot) = {
             let start_slot = h_flex()
                 .size(START_TAB_SLOT_SIZE)

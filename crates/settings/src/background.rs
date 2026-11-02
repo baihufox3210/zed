@@ -77,6 +77,21 @@ pub fn surface_color(color: Hsla, cx: &App) -> Hsla {
     region_color(color, Region::Panels, cx)
 }
 
+pub fn chrome_surface_color(color: Hsla, region: Region, cx: &App) -> Hsla {
+    if includes(region, cx) {
+        let opacity = SettingsStore::global(cx)
+            .merged_settings()
+            .background
+            .as_ref()
+            .and_then(|settings| settings.surface_opacity)
+            .unwrap_or(0.25)
+            .clamp(0.0, 1.0);
+        color.opacity(opacity)
+    } else {
+        color
+    }
+}
+
 fn render_image(color: Hsla, cx: &App) -> Option<AnyElement> {
     let settings = SettingsStore::global(cx)
         .merged_settings()

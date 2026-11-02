@@ -382,6 +382,7 @@ pub struct BackgroundSettingsContent {
     pub size: Option<BackgroundSize>,
     pub position: Option<BackgroundPosition>,
     pub overlay_opacity: Option<f32>,
+    pub surface_opacity: Option<f32>,
 }
 
 #[derive(
