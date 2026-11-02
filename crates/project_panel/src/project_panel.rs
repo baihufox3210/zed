@@ -663,7 +663,7 @@ fn get_item_color(is_sticky: bool, cx: &App) -> ItemColors {
         default: if is_sticky {
             colors.panel_overlay_background
         } else {
-            colors.panel_background
+            settings::background::surface_color(colors.panel_background, cx)
         },
         hover: if is_sticky {
             colors.panel_overlay_hover

@@ -1,3 +1,4 @@
+pub mod background;
 mod base_keymap_setting;
 mod content_into_gpui;
 mod editable_setting_control;

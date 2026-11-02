@@ -254,3 +254,29 @@ fn removing_registration_preserves_source_and_allows_reregistration() -> Result<
     );
     Ok(())
 }
+
+#[test]
+fn updating_patch_preserves_source_and_rejects_applied_or_duplicate_versions() -> Result<()> {
+    let (_directory, service) = checkout()?;
+    register(&service, PATCH)?;
+    let replacement = service.root.join("replacement.patch");
+    fs::write(&replacement, PATCH.replace("+after", "+updated"))?;
+    service.update("example", &replacement)?;
+    assert_eq!(
+        fs::read_to_string(service.root.join("example.txt"))?,
+        "before\n"
+    );
+    assert!(service.update("example", &replacement).is_err());
+    service.set_enabled("example", true)?;
+    service.apply("example", false)?;
+    assert_eq!(
+        fs::read_to_string(service.root.join("example.txt"))?,
+        "updated\n"
+    );
+    fs::write(&replacement, PATCH)?;
+    assert!(service.update("example", &replacement).is_err());
+    service.apply("example", true)?;
+    service.update("example", &replacement)?;
+    assert_eq!(first(&service)?.compatibility, Compatibility::Compatible);
+    Ok(())
+}

@@ -129,6 +129,8 @@ where
 pub struct ImageStyle {
     grayscale: bool,
     object_fit: ObjectFit,
+    position: [f32; 2],
+    blur_radius: u16,
     loading: Option<Box<dyn Fn() -> AnyElement>>,
     fallback: Option<Box<dyn Fn() -> AnyElement>>,
 }
@@ -138,6 +140,8 @@ impl Default for ImageStyle {
         Self {
             grayscale: false,
             object_fit: ObjectFit::Contain,
+            position: [0.5, 0.5],
+            blur_radius: 0,
             loading: None,
             fallback: None,
         }
@@ -158,6 +162,18 @@ pub trait StyledImage: Sized {
     /// Set the object fit for the image.
     fn object_fit(mut self, object_fit: ObjectFit) -> Self {
         self.image_style().object_fit = object_fit;
+        self
+    }
+
+    /// Position the fitted image using normalized horizontal and vertical anchors.
+    fn image_position(mut self, horizontal: f32, vertical: f32) -> Self {
+        self.image_style().position = [horizontal.clamp(0.0, 1.0), vertical.clamp(0.0, 1.0)];
+        self
+    }
+
+    /// Blur the decoded image once per radius using the background asset cache.
+    fn image_blur(mut self, radius: f32) -> Self {
+        self.image_style().blur_radius = (radius.clamp(0.0, 30.0) * 10.0).round() as u16;
         self
     }
 
@@ -484,13 +500,29 @@ impl Element for Img {
                     window,
                     cx,
                 ) {
+                    let data = if self.style.blur_radius > 0 {
+                        let source = BlurredImageSource {
+                            image: data,
+                            radius: self.style.blur_radius,
+                        };
+                        match window.use_asset::<AssetLogger<BlurredImage>>(&source, cx) {
+                            Some(Ok(image)) => image,
+                            _ => return,
+                        }
+                    } else {
+                        data
+                    };
                     if data.frame_count() == 0 {
                         return;
                     }
-                    let new_bounds = self
+                    let mut new_bounds = self
                         .style
                         .object_fit
                         .get_bounds(bounds, data.size(layout_state.frame_index));
+                    new_bounds.origin.x = bounds.origin.x
+                        + (bounds.size.width - new_bounds.size.width) * self.style.position[0];
+                    new_bounds.origin.y = bounds.origin.y
+                        + (bounds.size.height - new_bounds.size.height) * self.style.position[1];
                     let corner_radii = style.corner_radii.to_pixels(window.rem_size());
                     window
                         .paint_image(
@@ -592,6 +624,50 @@ impl ImageSource {
             ImageSource::Resource(resource) => cx.has_asset::<ImgResourceLoader>(resource),
             ImageSource::Custom(_) | ImageSource::Render(_) => false,
             ImageSource::Image(data) => cx.has_asset::<AssetLogger<ImageDecoder>>(data),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct BlurredImageSource {
+    image: Arc<RenderImage>,
+    radius: u16,
+}
+
+impl std::hash::Hash for BlurredImageSource {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.image.id.hash(state);
+        self.radius.hash(state);
+    }
+}
+
+struct BlurredImage;
+
+impl Asset for BlurredImage {
+    type Source = BlurredImageSource;
+    type Output = Result<Arc<RenderImage>, ImageCacheError>;
+
+    fn load(
+        source: Self::Source,
+        _: &mut App,
+    ) -> impl Future<Output = Self::Output> + Send + 'static {
+        async move {
+            let size = source.image.size(0);
+            let bytes = source
+                .image
+                .as_bytes(0)
+                .ok_or_else(|| anyhow::anyhow!("Empty background image"))?;
+            let buffer = image::RgbaImage::from_raw(
+                u32::try_from(size.width.0).map_err(anyhow::Error::from)?,
+                u32::try_from(size.height.0).map_err(anyhow::Error::from)?,
+                bytes.to_vec(),
+            )
+            .ok_or_else(|| anyhow::anyhow!("Invalid background image dimensions"))?;
+            let blurred = image::imageops::blur(&buffer, f32::from(source.radius) / 10.0);
+            Ok(Arc::new(RenderImage::new(SmallVec::from_elem(
+                image::Frame::new(blurred),
+                1,
+            ))))
         }
     }
 }

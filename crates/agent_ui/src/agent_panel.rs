@@ -6617,7 +6617,10 @@ impl Render for AgentPanel {
             .size_full()
             .justify_between()
             .track_focus(&self.focus_handle)
-            .bg(cx.theme().colors().panel_background)
+            .bg(settings::background::surface_color(
+                cx.theme().colors().panel_background,
+                cx,
+            ))
             .on_action(cx.listener(|this, action: &NewThread, window, cx| {
                 this.new_thread(action, window, cx);
             }))

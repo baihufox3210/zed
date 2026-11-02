@@ -4,7 +4,7 @@ use std::path::Path;
 
 fn main() -> Result<()> {
     let mut arguments = std::env::args().skip(1);
-    let root = arguments.next().context("Usage: zed-patch <checkout> <list|validate|enable|disable|apply|revert|remove|register> [id] [--confirm-source-change]")?;
+    let root = arguments.next().context("Usage: zed-patch <checkout> <list|validate|enable|disable|apply|revert|remove|register|update> [id] [--confirm-source-change]")?;
     let operation = arguments.next().context("Missing operation")?;
     let service = PatchService::open(Path::new(&root))?;
     if operation == "list" || operation == "validate" {
@@ -34,6 +34,14 @@ fn main() -> Result<()> {
     }
     let id = arguments.next().context("Missing patch ID")?;
     match operation.as_str() {
+        "update" => service.update(
+            &id,
+            Path::new(
+                &arguments
+                    .next()
+                    .context("Missing replacement .patch file")?,
+            ),
+        )?,
         "enable" => service.set_enabled(&id, true)?,
         "disable" => service.set_enabled(&id, false)?,
         "apply" | "revert" | "remove" => {

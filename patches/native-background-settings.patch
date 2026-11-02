@@ -1,0 +1,1177 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index cc60cc0208..b7f216352d 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -16429,6 +16429,7 @@ dependencies = [
+  "heck 0.5.0",
+  "http_client",
+  "http_proxy",
++ "image",
+  "itertools 0.14.0",
+  "language",
+  "language_model",
+diff --git a/assets/settings/default.json b/assets/settings/default.json
+index 8172ebde47..6cc14a889a 100644
+--- a/assets/settings/default.json
++++ b/assets/settings/default.json
+@@ -1,5 +1,14 @@
+ {
+   "$schema": "zed://schemas/settings",
++  "background": {
++    "enabled": false,
++    "image_opacity": 1.0,
++    "editor_opacity": 0.8,
++    "blur": 0.0,
++    "size": "cover",
++    "position": "center",
++    "overlay_opacity": 0.0
++  },
+   // The name of the Zed theme to use for the UI.
+   //
+   // `mode` is one of:
+diff --git a/crates/agent_ui/src/agent_panel.rs b/crates/agent_ui/src/agent_panel.rs
+index c5a19bccc8..7760b4dc77 100644
+--- a/crates/agent_ui/src/agent_panel.rs
++++ b/crates/agent_ui/src/agent_panel.rs
+@@ -6617,7 +6617,10 @@ impl Render for AgentPanel {
+             .size_full()
+             .justify_between()
+             .track_focus(&self.focus_handle)
+-            .bg(cx.theme().colors().panel_background)
++            .bg(settings::background::surface_color(
++                cx.theme().colors().panel_background,
++                cx,
++            ))
+             .on_action(cx.listener(|this, action: &NewThread, window, cx| {
+                 this.new_thread(action, window, cx);
+             }))
+diff --git a/crates/editor/src/editor.rs b/crates/editor/src/editor.rs
+index 5f665ebf04..40b40b2497 100644
+--- a/crates/editor/src/editor.rs
++++ b/crates/editor/src/editor.rs
+@@ -119,6 +119,7 @@ pub use git::{
+ pub(crate) use git::{DiffHunkKey, StoredReviewComment};
+ use git::{DiffReviewDragState, DiffReviewOverlay, InlineBlamePopover};
+ pub(crate) use git::{DisplayDiffHunk, PhantomDiffReviewIndicator};
++use gpui::ReadGlobal as _;
+ pub use hover_popover::hover_markdown_style;
+ pub use inlays::Inlay;
+ pub use inline_input::InlineInputState;
+@@ -11544,7 +11545,19 @@ impl Editor {
+         let background = match self.mode {
+             EditorMode::SingleLine => cx.theme().system().transparent,
+             EditorMode::AutoHeight { .. } => cx.theme().system().transparent,
+-            EditorMode::Full { .. } => cx.theme().colors().editor_background,
++            EditorMode::Full { .. } => {
++                let opacity = SettingsStore::global(cx)
++                    .merged_settings()
++                    .background
++                    .as_ref()
++                    .filter(|background| {
++                        background.enabled == Some(true) && background.image_path.is_some()
++                    })
++                    .map(|background| background.editor_opacity.unwrap_or(0.8))
++                    .unwrap_or(1.0)
++                    .clamp(0.0, 1.0);
++                cx.theme().colors().editor_background.opacity(opacity)
++            }
+             EditorMode::Minimap { .. } => cx.theme().colors().editor_background.opacity(0.7),
+         };
+ 
+@@ -12688,7 +12701,79 @@ impl Focusable for Editor {
+ 
+ impl Render for Editor {
+     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+-        EditorElement::new(&cx.entity(), self.create_style(cx))
++        let style = self.create_style(cx);
++        if !matches!(self.mode, EditorMode::Full { .. }) {
++            return EditorElement::new(&cx.entity(), style).into_any_element();
++        }
++        let background = SettingsStore::global(cx)
++            .merged_settings()
++            .background
++            .as_ref()
++            .filter(|background| background.enabled == Some(true))
++            .and_then(|background| {
++                Some((
++                    background.image_path.as_ref()?.clone(),
++                    background.image_opacity.unwrap_or(1.0).clamp(0.0, 1.0),
++                    background.size.unwrap_or_default(),
++                    background.position.unwrap_or_default(),
++                    background.blur.unwrap_or(0.0),
++                    background.overlay_opacity.unwrap_or(0.0).clamp(0.0, 1.0),
++                ))
++            });
++        if background.is_none() {
++            return EditorElement::new(&cx.entity(), style).into_any_element();
++        }
++        gpui::div()
++            .relative()
++            .size_full()
++            .overflow_hidden()
++            .bg(cx.theme().colors().editor_background)
++            .when_some(
++                background,
++                |container, (path, opacity, size, position, blur, overlay_opacity)| {
++                    let fit = match size {
++                        settings::BackgroundSize::Cover => gpui::ObjectFit::Cover,
++                        settings::BackgroundSize::Contain => gpui::ObjectFit::Contain,
++                        settings::BackgroundSize::Stretch => gpui::ObjectFit::Fill,
++                    };
++                    let (horizontal, vertical) = match position {
++                        settings::BackgroundPosition::Center => (0.5, 0.5),
++                        settings::BackgroundPosition::Top => (0.5, 0.0),
++                        settings::BackgroundPosition::Bottom => (0.5, 1.0),
++                        settings::BackgroundPosition::Left => (0.0, 0.5),
++                        settings::BackgroundPosition::Right => (1.0, 0.5),
++                    };
++                    let fallback_color = cx.theme().colors().editor_background;
++                    container
++                        .child(
++                            gpui::img(std::path::PathBuf::from(path))
++                                .object_fit(fit)
++                                .image_position(horizontal, vertical)
++                                .image_blur(blur)
++                                .with_fallback(move || {
++                                    gpui::div()
++                                        .size_full()
++                                        .bg(fallback_color)
++                                        .into_any_element()
++                                })
++                                .absolute()
++                                .inset_0()
++                                .size_full()
++                                .opacity(opacity),
++                        )
++                        .when(overlay_opacity > 0.0, |container| {
++                            container.child(
++                                gpui::div()
++                                    .absolute()
++                                    .inset_0()
++                                    .size_full()
++                                    .bg(gpui::black().opacity(overlay_opacity)),
++                            )
++                        })
++                },
++            )
++            .child(EditorElement::new(&cx.entity(), style))
++            .into_any_element()
+     }
+ }
+ 
+diff --git a/crates/git_ui/src/git_panel.rs b/crates/git_ui/src/git_panel.rs
+index 33ca210eb8..a0ca4b5ab5 100644
+--- a/crates/git_ui/src/git_panel.rs
++++ b/crates/git_ui/src/git_panel.rs
+@@ -9634,7 +9634,10 @@ impl Render for GitPanel {
+             .on_action(cx.listener(Self::activate_history_tab))
+             .size_full()
+             .overflow_hidden()
+-            .bg(cx.theme().colors().panel_background)
++            .bg(settings::background::surface_color(
++                cx.theme().colors().panel_background,
++                cx,
++            ))
+             .child(
+                 v_flex()
+                     .size_full()
+diff --git a/crates/gpui/src/elements/img.rs b/crates/gpui/src/elements/img.rs
+index 2c77e5f32a..839e9e4537 100644
+--- a/crates/gpui/src/elements/img.rs
++++ b/crates/gpui/src/elements/img.rs
+@@ -129,6 +129,8 @@ where
+ pub struct ImageStyle {
+     grayscale: bool,
+     object_fit: ObjectFit,
++    position: [f32; 2],
++    blur_radius: u16,
+     loading: Option<Box<dyn Fn() -> AnyElement>>,
+     fallback: Option<Box<dyn Fn() -> AnyElement>>,
+ }
+@@ -138,6 +140,8 @@ impl Default for ImageStyle {
+         Self {
+             grayscale: false,
+             object_fit: ObjectFit::Contain,
++            position: [0.5, 0.5],
++            blur_radius: 0,
+             loading: None,
+             fallback: None,
+         }
+@@ -161,6 +165,18 @@ pub trait StyledImage: Sized {
+         self
+     }
+ 
++    /// Position the fitted image using normalized horizontal and vertical anchors.
++    fn image_position(mut self, horizontal: f32, vertical: f32) -> Self {
++        self.image_style().position = [horizontal.clamp(0.0, 1.0), vertical.clamp(0.0, 1.0)];
++        self
++    }
++
++    /// Blur the decoded image once per radius using the background asset cache.
++    fn image_blur(mut self, radius: f32) -> Self {
++        self.image_style().blur_radius = (radius.clamp(0.0, 30.0) * 10.0).round() as u16;
++        self
++    }
++
+     /// Set a fallback function that will be invoked to render an error view should
+     /// the image fail to load.
+     fn with_fallback(mut self, fallback: impl Fn() -> AnyElement + 'static) -> Self {
+@@ -484,13 +500,29 @@ impl Element for Img {
+                     window,
+                     cx,
+                 ) {
++                    let data = if self.style.blur_radius > 0 {
++                        let source = BlurredImageSource {
++                            image: data,
++                            radius: self.style.blur_radius,
++                        };
++                        match window.use_asset::<AssetLogger<BlurredImage>>(&source, cx) {
++                            Some(Ok(image)) => image,
++                            _ => return,
++                        }
++                    } else {
++                        data
++                    };
+                     if data.frame_count() == 0 {
+                         return;
+                     }
+-                    let new_bounds = self
++                    let mut new_bounds = self
+                         .style
+                         .object_fit
+                         .get_bounds(bounds, data.size(layout_state.frame_index));
++                    new_bounds.origin.x = bounds.origin.x
++                        + (bounds.size.width - new_bounds.size.width) * self.style.position[0];
++                    new_bounds.origin.y = bounds.origin.y
++                        + (bounds.size.height - new_bounds.size.height) * self.style.position[1];
+                     let corner_radii = style.corner_radii.to_pixels(window.rem_size());
+                     window
+                         .paint_image(
+@@ -596,6 +628,50 @@ impl ImageSource {
+     }
+ }
+ 
++#[derive(Clone)]
++struct BlurredImageSource {
++    image: Arc<RenderImage>,
++    radius: u16,
++}
++
++impl std::hash::Hash for BlurredImageSource {
++    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
++        self.image.id.hash(state);
++        self.radius.hash(state);
++    }
++}
++
++struct BlurredImage;
++
++impl Asset for BlurredImage {
++    type Source = BlurredImageSource;
++    type Output = Result<Arc<RenderImage>, ImageCacheError>;
++
++    fn load(
++        source: Self::Source,
++        _: &mut App,
++    ) -> impl Future<Output = Self::Output> + Send + 'static {
++        async move {
++            let size = source.image.size(0);
++            let bytes = source
++                .image
++                .as_bytes(0)
++                .ok_or_else(|| anyhow::anyhow!("Empty background image"))?;
++            let buffer = image::RgbaImage::from_raw(
++                u32::try_from(size.width.0).map_err(anyhow::Error::from)?,
++                u32::try_from(size.height.0).map_err(anyhow::Error::from)?,
++                bytes.to_vec(),
++            )
++            .ok_or_else(|| anyhow::anyhow!("Invalid background image dimensions"))?;
++            let blurred = image::imageops::blur(&buffer, f32::from(source.radius) / 10.0);
++            Ok(Arc::new(RenderImage::new(SmallVec::from_elem(
++                image::Frame::new(blurred),
++                1,
++            ))))
++        }
++    }
++}
++
+ #[derive(Clone)]
+ enum ImageDecoder {}
+ 
+diff --git a/crates/project_panel/src/project_panel.rs b/crates/project_panel/src/project_panel.rs
+index cc8b23d2a0..1a1e1cf0c3 100644
+--- a/crates/project_panel/src/project_panel.rs
++++ b/crates/project_panel/src/project_panel.rs
+@@ -663,7 +663,7 @@ fn get_item_color(is_sticky: bool, cx: &App) -> ItemColors {
+         default: if is_sticky {
+             colors.panel_overlay_background
+         } else {
+-            colors.panel_background
++            settings::background::surface_color(colors.panel_background, cx)
+         },
+         hover: if is_sticky {
+             colors.panel_overlay_hover
+diff --git a/crates/settings/src/settings.rs b/crates/settings/src/settings.rs
+index ce7731fd83..45eb666326 100644
+--- a/crates/settings/src/settings.rs
++++ b/crates/settings/src/settings.rs
+@@ -1,3 +1,4 @@
++pub mod background;
+ mod base_keymap_setting;
+ mod content_into_gpui;
+ mod editable_setting_control;
+diff --git a/crates/settings/src/vscode_import.rs b/crates/settings/src/vscode_import.rs
+index 3cc073635e..670cf06969 100644
+--- a/crates/settings/src/vscode_import.rs
++++ b/crates/settings/src/vscode_import.rs
+@@ -181,6 +181,7 @@ impl VsCodeSettings {
+ 
+     pub fn settings_content(&self) -> SettingsContent {
+         SettingsContent {
++            background: None,
+             agent: self.agent_settings_content(),
+             agent_servers: None,
+             audio: None,
+diff --git a/crates/settings_content/src/settings_content.rs b/crates/settings_content/src/settings_content.rs
+index c97679dfae..6b335c9902 100644
+--- a/crates/settings_content/src/settings_content.rs
++++ b/crates/settings_content/src/settings_content.rs
+@@ -184,6 +184,8 @@ pub struct SettingsContent {
+     #[serde(flatten)]
+     pub workspace: WorkspaceSettingsContent,
+ 
++    pub background: Option<BackgroundSettingsContent>,
++
+     #[serde(flatten)]
+     pub editor: EditorSettingsContent,
+ 
+@@ -337,6 +339,74 @@ pub struct SettingsContent {
+     pub instrumentation: Option<InstrumentationSettingsContent>,
+ }
+ 
++#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
++pub struct BackgroundSettingsContent {
++    pub enabled: Option<bool>,
++    pub image_path: Option<String>,
++    pub image_opacity: Option<f32>,
++    pub editor_opacity: Option<f32>,
++    pub blur: Option<f32>,
++    pub size: Option<BackgroundSize>,
++    pub position: Option<BackgroundPosition>,
++    pub overlay_opacity: Option<f32>,
++}
++
++#[derive(
++    Clone,
++    Copy,
++    Debug,
++    PartialEq,
++    Eq,
++    Default,
++    Serialize,
++    Deserialize,
++    JsonSchema,
++    strum::VariantArray,
++    strum::VariantNames,
++)]
++#[serde(rename_all = "snake_case")]
++pub enum BackgroundSize {
++    #[default]
++    Cover,
++    Contain,
++    Stretch,
++}
++
++impl crate::merge_from::MergeFrom for BackgroundSize {
++    fn merge_from(&mut self, other: &Self) {
++        *self = *other;
++    }
++}
++
++#[derive(
++    Clone,
++    Copy,
++    Debug,
++    PartialEq,
++    Eq,
++    Default,
++    Serialize,
++    Deserialize,
++    JsonSchema,
++    strum::VariantArray,
++    strum::VariantNames,
++)]
++#[serde(rename_all = "snake_case")]
++pub enum BackgroundPosition {
++    #[default]
++    Center,
++    Top,
++    Bottom,
++    Left,
++    Right,
++}
++
++impl crate::merge_from::MergeFrom for BackgroundPosition {
++    fn merge_from(&mut self, other: &Self) {
++        *self = *other;
++    }
++}
++
+ /// Configuration for developer-oriented instrumentation tools that collect
+ /// diagnostic data about a running Zed instance.
+ #[with_fallible_options]
+@@ -405,7 +475,7 @@ impl SettingsContent {
+ fallible_options::flattened_deserialize!(SettingsContent {
+     sections: { project, theme, extension, workspace, editor, remote },
+     options: {
+-        call_hierarchy, command_palette, file_finder, git_panel, tabs, tab_bar, tab_switcher, status_bar, preview_tabs, agent,
++        background, call_hierarchy, command_palette, file_finder, git_panel, tabs, tab_bar, tab_switcher, status_bar, preview_tabs, agent,
+         agent_servers, audio, auto_update, base_keymap, collaboration_panel, debugger, diagnostics,
+         git,
+         global_lsp_settings, image_viewer, markdown_preview, repl, helix_mode, hide_mouse,
+diff --git a/crates/settings_ui/Cargo.toml b/crates/settings_ui/Cargo.toml
+index b0b2f7c00f..8eb7f6cabf 100644
+--- a/crates/settings_ui/Cargo.toml
++++ b/crates/settings_ui/Cargo.toml
+@@ -44,6 +44,7 @@ gpui.workspace = true
+ heck.workspace = true
+ http_client.workspace = true
+ http_proxy.workspace = true
++image.workspace = true
+ itertools.workspace = true
+ language.workspace = true
+ language_model.workspace = true
+diff --git a/crates/settings_ui/src/page_data.rs b/crates/settings_ui/src/page_data.rs
+index eefb373eb8..7eeb6cd2e3 100644
+--- a/crates/settings_ui/src/page_data.rs
++++ b/crates/settings_ui/src/page_data.rs
+@@ -1,4 +1,4 @@
+-use gpui::{Action as _, App};
++use gpui::{Action as _, App, AppContext as _, PathPromptOptions};
+ use itertools::Itertools as _;
+ use settings::{
+     AudioInputDeviceName, AudioOutputDeviceName, EditPredictionDataCollectionChoice,
+@@ -8,6 +8,7 @@ use std::sync::{Arc, OnceLock};
+ use strum::{EnumMessage, IntoDiscriminant as _, VariantArray};
+ use theme::SystemAppearance;
+ use ui::IntoElement;
++use util::ResultExt as _;
+ 
+ use crate::{
+     ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
+@@ -66,6 +67,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
+     vec![
+         general_page(cx),
+         appearance_page(),
++        background_page(),
+         keymap_page(),
+         editor_page(),
+         languages_and_tools_page(cx),
+@@ -82,6 +84,306 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
+     ]
+ }
+ 
++fn show_background_error(window: gpui::AnyWindowHandle, cx: &mut gpui::AsyncApp, message: String) {
++    window
++        .update(cx, |_, window, cx| {
++            drop(window.prompt(
++                gpui::PromptLevel::Critical,
++                "Background image error",
++                Some(&message),
++                &["OK"],
++                cx,
++            ));
++        })
++        .log_err();
++}
++
++fn save_background_change(
++    window: &mut gpui::Window,
++    cx: &mut App,
++    change: impl FnOnce(&mut SettingsContent, &App) + Send + 'static,
++) {
++    let window_handle = window.window_handle();
++    let completion =
++        settings::update_settings_file_with_completion(<dyn fs::Fs>::global(cx), cx, change);
++    cx.spawn(async move |cx| match completion.await {
++        Ok(Ok(())) => {}
++        Ok(Err(error)) => show_background_error(
++            window_handle,
++            cx,
++            format!("Could not save background settings: {error:#}"),
++        ),
++        Err(error) => show_background_error(
++            window_handle,
++            cx,
++            format!("Could not save background settings: {error}"),
++        ),
++    })
++    .detach();
++}
++
++fn background_page() -> SettingsPage {
++    let items = vec![
++        SettingsPageItem::SectionHeader("Background"),
++        SettingsPageItem::SubPageLink(SubPageLink {
++            title: "Background Preview".into(),
++            r#type: Default::default(),
++            description: Some("Preview the image and editor composition.".into()),
++            search_aliases: &[],
++            json_path: None,
++            in_json: false,
++            files: USER,
++            render: crate::pages::render_background_preview,
++        }),
++        SettingsPageItem::ActionLink(ActionLink {
++            title: "Select / Change Image".into(),
++            description: Some("Choose a PNG, JPEG, or WebP image.".into()),
++            button_text: "Select / Change Image".into(),
++            on_click: Arc::new(|_, window, cx| {
++                let window_handle = window.window_handle();
++                let prompt = cx.prompt_for_paths(PathPromptOptions {
++                    files: true,
++                    directories: false,
++                    multiple: false,
++                    prompt: Some("Select background image".into()),
++                });
++                cx.spawn(async move |cx| {
++                    let path = match prompt.await {
++                        Ok(Ok(Some(paths))) => paths.into_iter().next(),
++                        Ok(Ok(None)) => None,
++                        Ok(Err(error)) => {
++                            show_background_error(
++                                window_handle,
++                                cx,
++                                format!("Could not open image picker: {error:#}"),
++                            );
++                            None
++                        }
++                        Err(error) => {
++                            show_background_error(
++                                window_handle,
++                                cx,
++                                format!("Image picker failed: {error}"),
++                            );
++                            None
++                        }
++                    };
++                    let Some(path) = path else { return };
++                    let supported = path.extension().is_some_and(|extension| {
++                        matches!(
++                            extension.to_str().map(str::to_ascii_lowercase).as_deref(),
++                            Some("png" | "jpg" | "jpeg" | "webp")
++                        )
++                    });
++                    if !supported {
++                        show_background_error(
++                            window_handle,
++                            cx,
++                            "Select a PNG, JPEG, or WebP image.".into(),
++                        );
++                        return;
++                    }
++                    let image_path_to_validate = path.clone();
++                    let validation = cx
++                        .background_spawn(async move {
++                            image::ImageReader::open(image_path_to_validate)
++                                .map_err(anyhow::Error::from)?
++                                .decode()
++                                .map_err(anyhow::Error::from)
++                        })
++                        .await;
++                    if let Err(error) = validation {
++                        show_background_error(
++                            window_handle,
++                            cx,
++                            format!("Could not load image: {error:#}"),
++                        );
++                        return;
++                    }
++                    let Some(image_path) = path.to_str().map(str::to_owned) else {
++                        show_background_error(
++                            window_handle,
++                            cx,
++                            "The image path must use valid Unicode characters.".into(),
++                        );
++                        return;
++                    };
++                    let completion = cx.update(|cx| {
++                        settings::update_settings_file_with_completion(
++                            <dyn fs::Fs>::global(cx),
++                            cx,
++                            move |content, _| {
++                                let background = content.background.get_or_insert_default();
++                                background.image_path = Some(image_path);
++                                background.enabled = Some(true);
++                            },
++                        )
++                    });
++                    match completion.await {
++                        Ok(Ok(())) => {}
++                        Ok(Err(error)) => show_background_error(
++                            window_handle,
++                            cx,
++                            format!("Could not save background image: {error:#}"),
++                        ),
++                        Err(error) => show_background_error(
++                            window_handle,
++                            cx,
++                            format!("Could not save background image: {error}"),
++                        ),
++                    }
++                })
++                .detach();
++            }),
++            files: USER,
++        }),
++        SettingsPageItem::ActionLink(ActionLink {
++            title: "Remove Image".into(),
++            description: Some("Clear the selected background image.".into()),
++            button_text: "Remove Image".into(),
++            on_click: Arc::new(|_, window, cx| {
++                save_background_change(window, cx, |content, _| {
++                    let background = content.background.get_or_insert_default();
++                    background.image_path = None;
++                    background.enabled = Some(false);
++                });
++            }),
++            files: USER,
++        }),
++        SettingsPageItem::ActionLink(ActionLink {
++            title: "Reset to Default".into(),
++            description: Some("Restore default background settings.".into()),
++            button_text: "Reset".into(),
++            on_click: Arc::new(|_, window, cx| {
++                save_background_change(window, cx, |content, _| {
++                    content.background = None;
++                });
++            }),
++            files: USER,
++        }),
++        SettingsPageItem::SettingItem(SettingItem {
++            title: "Enable Background",
++            description: "Show the selected image behind the editor.",
++            field: Box::new(SettingField {
++                organization_override: None,
++                json_path: Some("background.enabled"),
++                pick: |content| content.background.as_ref()?.enabled.as_ref(),
++                write: |content, value, _| {
++                    content.background.get_or_insert_default().enabled = value;
++                },
++            }),
++            metadata: None,
++            files: USER,
++        }),
++        SettingsPageItem::SettingItem(SettingItem {
++            title: "Image Path",
++            description: "Path to a PNG, JPEG, or WebP image.",
++            field: Box::new(SettingField {
++                organization_override: None,
++                json_path: Some("background.image_path"),
++                pick: |content| content.background.as_ref()?.image_path.as_ref(),
++                write: |content, value, _| {
++                    content.background.get_or_insert_default().image_path = value;
++                },
++            }),
++            metadata: None,
++            files: USER,
++        }),
++        SettingsPageItem::SettingItem(SettingItem {
++            title: "Image Opacity",
++            description: "Image opacity from 0 to 1.",
++            field: Box::new(SettingField {
++                organization_override: None,
++                json_path: Some("background.image_opacity"),
++                pick: |content| content.background.as_ref()?.image_opacity.as_ref(),
++                write: |content, value, _| {
++                    content.background.get_or_insert_default().image_opacity =
++                        value.map(|value: f32| value.clamp(0.0, 1.0));
++                },
++            }),
++            metadata: None,
++            files: USER,
++        }),
++        SettingsPageItem::SettingItem(SettingItem {
++            title: "Editor Opacity",
++            description: "Editor background opacity from 0 to 1.",
++            field: Box::new(SettingField {
++                organization_override: None,
++                json_path: Some("background.editor_opacity"),
++                pick: |content| content.background.as_ref()?.editor_opacity.as_ref(),
++                write: |content, value, _| {
++                    content.background.get_or_insert_default().editor_opacity =
++                        value.map(|value: f32| value.clamp(0.0, 1.0));
++                },
++            }),
++            metadata: None,
++            files: USER,
++        }),
++        SettingsPageItem::SettingItem(SettingItem {
++            title: "Background Blur",
++            description: "Blur radius from 0 to 30 pixels.",
++            field: Box::new(SettingField {
++                organization_override: None,
++                json_path: Some("background.blur"),
++                pick: |content| content.background.as_ref()?.blur.as_ref(),
++                write: |content, value, _| {
++                    content.background.get_or_insert_default().blur =
++                        value.map(|value: f32| value.clamp(0.0, 30.0));
++                },
++            }),
++            metadata: None,
++            files: USER,
++        }),
++        SettingsPageItem::SettingItem(SettingItem {
++            title: "Overlay Opacity",
++            description: "Overlay opacity from 0 to 1.",
++            field: Box::new(SettingField {
++                organization_override: None,
++                json_path: Some("background.overlay_opacity"),
++                pick: |content| content.background.as_ref()?.overlay_opacity.as_ref(),
++                write: |content, value, _| {
++                    content.background.get_or_insert_default().overlay_opacity =
++                        value.map(|value: f32| value.clamp(0.0, 1.0));
++                },
++            }),
++            metadata: None,
++            files: USER,
++        }),
++        SettingsPageItem::SettingItem(SettingItem {
++            title: "Background Size",
++            description: "How to fit the image within the editor.",
++            field: Box::new(SettingField {
++                organization_override: None,
++                json_path: Some("background.size"),
++                pick: |content| content.background.as_ref()?.size.as_ref(),
++                write: |content, value, _| {
++                    content.background.get_or_insert_default().size = value;
++                },
++            }),
++            metadata: None,
++            files: USER,
++        }),
++        SettingsPageItem::SettingItem(SettingItem {
++            title: "Background Position",
++            description: "Where to anchor the image within the editor.",
++            field: Box::new(SettingField {
++                organization_override: None,
++                json_path: Some("background.position"),
++                pick: |content| content.background.as_ref()?.position.as_ref(),
++                write: |content, value, _| {
++                    content.background.get_or_insert_default().position = value;
++                },
++            }),
++            metadata: None,
++            files: USER,
++        }),
++    ];
++    SettingsPage {
++        title: "Background",
++        items: items.into_boxed_slice(),
++    }
++}
++
+ fn developer_page(cx: &App) -> SettingsPage {
+     use feature_flags::FeatureFlagAppExt as _;
+ 
+diff --git a/crates/settings_ui/src/pages.rs b/crates/settings_ui/src/pages.rs
+index 6038a5eaa1..a3c5341829 100644
+--- a/crates/settings_ui/src/pages.rs
++++ b/crates/settings_ui/src/pages.rs
+@@ -1,3 +1,5 @@
++mod background_preview;
++pub(crate) use background_preview::render_background_preview;
+ mod audio_input_output_setup;
+ mod audio_test_window;
+ mod edit_prediction_provider_setup;
+diff --git a/crates/settings_ui/src/settings_ui.rs b/crates/settings_ui/src/settings_ui.rs
+index 96371f98a1..7c370bd81a 100644
+--- a/crates/settings_ui/src/settings_ui.rs
++++ b/crates/settings_ui/src/settings_ui.rs
+@@ -27,7 +27,7 @@ use settings::{
+ };
+ use std::{
+     any::{Any, TypeId, type_name},
+-    cell::RefCell,
++    cell::{Cell, RefCell},
+     collections::{HashMap, HashSet},
+     num::{NonZero, NonZeroU32},
+     ops::Range,
+@@ -72,6 +72,16 @@ const HEADER_GROUP_TAB_INDEX: isize = 3;
+ const CONTENT_CONTAINER_TAB_INDEX: isize = 4;
+ const CONTENT_GROUP_TAB_INDEX: isize = 5;
+ 
++mod background {
++    gpui::actions!(
++        background,
++        [
++            /// Opens the background settings page.
++            OpenSettings,
++        ]
++    );
++}
++
+ const SIDEBAR_WIDTH: Pixels = px(226.);
+ const CONTENT_MIN_WIDTH: Pixels = px(400.);
+ 
+@@ -456,6 +466,9 @@ pub fn init(cx: &mut App) {
+     cx.on_action(|_: &OpenSettings, cx| {
+         open_settings_editor(None, None, None, cx);
+     });
++    cx.on_action(|_: &background::OpenSettings, cx| {
++        open_settings_editor_to_page("Background", None, None, cx);
++    });
+     cx.on_action(|_: &zed_actions::assistant::OpenSkillCreator, cx| {
+         open_skill_creator(pages::SkillCreatorOpenMode::Form, None, cx);
+     });
+@@ -484,6 +497,10 @@ pub fn init(cx: &mut App) {
+                     cx,
+                 );
+             })
++            .register_action(|_, _: &background::OpenSettings, window, cx| {
++                let window_handle = window.window_handle().downcast::<MultiWorkspace>();
++                open_settings_editor_to_page("Background", None, window_handle, cx);
++            })
+             .register_action(|_, _: &OpenSettings, window, cx| {
+                 let window_handle = window.window_handle().downcast::<MultiWorkspace>();
+                 open_settings_editor(None, None, window_handle, cx);
+@@ -557,6 +574,8 @@ fn init_renderers(cx: &mut App) {
+         .add_basic_renderer::<settings::RestoreOnStartupBehavior>(render_dropdown)
+         .add_basic_renderer::<settings::OnNewWindow>(render_dropdown)
+         .add_basic_renderer::<settings::BottomDockLayout>(render_dropdown)
++        .add_basic_renderer::<settings::BackgroundSize>(render_dropdown)
++        .add_basic_renderer::<settings::BackgroundPosition>(render_dropdown)
+         .add_basic_renderer::<settings::OnLastWindowClosed>(render_dropdown)
+         .add_basic_renderer::<settings::CliDefaultOpenBehavior>(render_dropdown)
+         .add_basic_renderer::<settings::DefaultOpenBehavior>(render_dropdown)
+@@ -613,7 +632,7 @@ fn init_renderers(cx: &mut App) {
+         .add_basic_renderer::<settings::CursorShapeContent>(render_dropdown)
+         .add_basic_renderer::<settings::EditPredictionPromptFormatContent>(render_dropdown)
+         .add_basic_renderer::<settings::EditPredictionDataCollectionChoice>(render_dropdown)
+-        .add_basic_renderer::<f32>(render_editable_number_field)
++        .add_basic_renderer::<f32>(render_background_number_field)
+         .add_basic_renderer::<settings::AutoCompactThreshold>(render_text_field)
+         .add_basic_renderer::<u32>(render_editable_number_field)
+         .add_basic_renderer::<u64>(render_editable_number_field)
+@@ -5130,6 +5149,114 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
+         .into_any_element()
+ }
+ 
++fn render_background_number_field(
++    field: SettingField<f32>,
++    file: SettingsUiFile,
++    metadata: Option<&SettingsFieldMetadata>,
++    title: &'static str,
++    description: &'static str,
++    window: &mut Window,
++    cx: &mut App,
++) -> AnyElement {
++    if !field
++        .json_path
++        .is_some_and(|path| path.starts_with("background."))
++    {
++        return render_editable_number_field(field, file, metadata, title, description, window, cx);
++    }
++    let maximum = if field.json_path == Some("background.blur") {
++        30.0
++    } else {
++        1.0
++    };
++    let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
++    let value = value.copied().unwrap_or(0.0).clamp(0.0, maximum);
++    let numeric = render_editable_number_field(
++        field,
++        file.clone(),
++        metadata,
++        title,
++        description,
++        window,
++        cx,
++    );
++    let bounds = Rc::new(Cell::new(gpui::Bounds::<Pixels>::default()));
++    let previous = Rc::new(Cell::new(value));
++    let change = Rc::new({
++        let bounds = bounds.clone();
++        move |position: gpui::Point<Pixels>, window: &mut Window, cx: &mut App| {
++            let bounds = bounds.get();
++            if bounds.size.width <= px(0.0) {
++                return;
++            }
++            let fraction = ((position.x - bounds.origin.x) / bounds.size.width).clamp(0.0, 1.0);
++            let value = (fraction * maximum * 100.0).round() / 100.0;
++            if previous.replace(value) == value {
++                return;
++            }
++            update_settings_file(
++                file.clone(),
++                field.json_path,
++                window,
++                cx,
++                move |content, cx| {
++                    (field.write)(content, Some(value), cx);
++                },
++            )
++            .log_err();
++        }
++    });
++    h_flex()
++        .gap_3()
++        .child(
++            div()
++                .id(format!("slider-{title}"))
++                .relative()
++                .w(px(180.0))
++                .h(px(24.0))
++                .cursor_pointer()
++                .child(
++                    div()
++                        .absolute()
++                        .top(px(10.0))
++                        .h(px(4.0))
++                        .w_full()
++                        .bg(cx.theme().colors().border),
++                )
++                .child(
++                    div()
++                        .absolute()
++                        .top(px(10.0))
++                        .h(px(4.0))
++                        .w(gpui::relative(value / maximum))
++                        .bg(cx.theme().colors().text_accent),
++                )
++                .child(
++                    gpui::canvas(
++                        move |track_bounds, _, _| bounds.set(track_bounds),
++                        |_, _, _, _| {},
++                    )
++                    .size_full(),
++                )
++                .on_mouse_down(gpui::MouseButton::Left, {
++                    let change = change.clone();
++                    move |event, window, cx| change(event.position, window, cx)
++                })
++                .on_mouse_move(move |event, window, cx| {
++                    if event.pressed_button == Some(gpui::MouseButton::Left) {
++                        change(event.position, window, cx);
++                    }
++                }),
++        )
++        .child(numeric)
++        .child(Label::new(if maximum == 1.0 {
++            format!("{:.0}%", value * 100.0)
++        } else {
++            format!("{value:.2} px")
++        }))
++        .into_any_element()
++}
++
+ fn render_editable_number_field<T: NumberFieldType + Send + Sync>(
+     field: SettingField<T>,
+     file: SettingsUiFile,
+diff --git a/crates/workspace/src/dock.rs b/crates/workspace/src/dock.rs
+index 60ba69dacc..98a278ee36 100644
+--- a/crates/workspace/src/dock.rs
++++ b/crates/workspace/src/dock.rs
+@@ -1341,11 +1341,19 @@ impl Render for Dock {
+ 
+             div()
+                 .id("dock-panel")
++                .relative()
++                .children(settings::background::render_surface(
++                    cx.theme().colors().panel_background,
++                    cx,
++                ))
+                 .key_context(dispatch_context)
+                 .track_focus(&self.focus_handle(cx))
+                 .focus_follows_mouse(self.focus_follows_mouse, cx)
+                 .flex()
+-                .bg(cx.theme().colors().panel_background)
++                .bg(settings::background::surface_color(
++                    cx.theme().colors().panel_background,
++                    cx,
++                ))
+                 .border_color(cx.theme().colors().border)
+                 .overflow_hidden()
+                 .map(|this| match self.position().axis() {
+@@ -1378,6 +1386,11 @@ impl Render for Dock {
+         } else {
+             div()
+                 .id("dock-panel")
++                .relative()
++                .children(settings::background::render_surface(
++                    cx.theme().colors().panel_background,
++                    cx,
++                ))
+                 .key_context(dispatch_context)
+                 .track_focus(&self.focus_handle(cx))
+         }
+diff --git a/crates/workspace/src/workspace.rs b/crates/workspace/src/workspace.rs
+index b4a687c884..36da72f91d 100644
+--- a/crates/workspace/src/workspace.rs
++++ b/crates/workspace/src/workspace.rs
+@@ -9900,7 +9900,8 @@ impl Render for Workspace {
+                     .child(
+                         div()
+                             .id("workspace")
+-                            .bg(colors.background)
++                            .children(settings::background::render_surface(colors.background, cx))
++                            .bg(settings::background::surface_color(colors.background, cx))
+                             .relative()
+                             .flex_1()
+                             .w_full()
+@@ -10263,7 +10264,7 @@ impl Render for Workspace {
+                                     .absolute()
+                                     .overflow_hidden()
+                                     .border_color(colors.border)
+-                                    .bg(colors.background)
++                                    .bg(settings::background::surface_color(colors.background, cx))
+                                     .child(zoomed_element)
+                                     .inset_0()
+                                     .shadow_lg();
+diff --git a/crates/settings/src/background.rs b/crates/settings/src/background.rs
+new file mode 100644
+index 0000000000..997d092771
+--- /dev/null
++++ b/crates/settings/src/background.rs
+@@ -0,0 +1,75 @@
++use crate::{BackgroundPosition, BackgroundSize, SettingsStore};
++use gpui::{AnyElement, App, Hsla, ReadGlobal as _, prelude::*};
++
++pub fn is_enabled(cx: &App) -> bool {
++    SettingsStore::global(cx)
++        .merged_settings()
++        .background
++        .as_ref()
++        .is_some_and(|settings| settings.enabled == Some(true) && settings.image_path.is_some())
++}
++
++pub fn surface_color(color: Hsla, cx: &App) -> Hsla {
++    if is_enabled(cx) {
++        color.opacity(0.0)
++    } else {
++        color
++    }
++}
++
++pub fn render_surface(color: Hsla, cx: &App) -> Option<AnyElement> {
++    let settings = SettingsStore::global(cx)
++        .merged_settings()
++        .background
++        .as_ref()?;
++    if settings.enabled != Some(true) {
++        return None;
++    }
++    let path = std::path::PathBuf::from(settings.image_path.as_ref()?);
++    let fit = match settings.size.unwrap_or_default() {
++        BackgroundSize::Cover => gpui::ObjectFit::Cover,
++        BackgroundSize::Contain => gpui::ObjectFit::Contain,
++        BackgroundSize::Stretch => gpui::ObjectFit::Fill,
++    };
++    let (horizontal, vertical) = match settings.position.unwrap_or_default() {
++        BackgroundPosition::Center => (0.5, 0.5),
++        BackgroundPosition::Top => (0.5, 0.0),
++        BackgroundPosition::Bottom => (0.5, 1.0),
++        BackgroundPosition::Left => (0.0, 0.5),
++        BackgroundPosition::Right => (1.0, 0.5),
++    };
++    Some(
++        gpui::div()
++            .absolute()
++            .inset_0()
++            .size_full()
++            .overflow_hidden()
++            .bg(color)
++            .child(
++                gpui::img(path)
++                    .absolute()
++                    .inset_0()
++                    .size_full()
++                    .object_fit(fit)
++                    .image_position(horizontal, vertical)
++                    .image_blur(settings.blur.unwrap_or(0.0))
++                    .opacity(settings.image_opacity.unwrap_or(1.0).clamp(0.0, 1.0)),
++            )
++            .child(
++                gpui::div()
++                    .absolute()
++                    .inset_0()
++                    .size_full()
++                    .bg(gpui::black()
++                        .opacity(settings.overlay_opacity.unwrap_or(0.0).clamp(0.0, 1.0))),
++            )
++            .child(
++                gpui::div()
++                    .absolute()
++                    .inset_0()
++                    .size_full()
++                    .bg(color.opacity(settings.editor_opacity.unwrap_or(0.8).clamp(0.0, 1.0))),
++            )
++            .into_any_element(),
++    )
++}
+diff --git a/crates/settings_ui/src/pages/background_preview.rs b/crates/settings_ui/src/pages/background_preview.rs
+new file mode 100644
+index 0000000000..71148d4427
+--- /dev/null
++++ b/crates/settings_ui/src/pages/background_preview.rs
+@@ -0,0 +1,60 @@
++use editor::Editor;
++use gpui::ReadGlobal as _;
++use gpui::{ScrollHandle, prelude::*};
++use language::Buffer;
++use settings::SettingsStore;
++use ui::prelude::*;
++
++use crate::SettingsWindow;
++
++pub(crate) fn render_background_preview(
++    _: &SettingsWindow,
++    _: &ScrollHandle,
++    window: &mut Window,
++    cx: &mut Context<SettingsWindow>,
++) -> AnyElement {
++    let editor = window.use_keyed_state("background-preview-editor", cx, |window, cx| {
++        let buffer = cx.new(|cx| {
++            Buffer::local(
++                "// Background preview\n\nfn main() {\n    println!(\"Hello, Zed!\");\n}\n",
++                cx,
++            )
++        });
++        Editor::for_buffer(buffer, None, window, cx)
++    });
++    let path = SettingsStore::global(cx)
++        .merged_settings()
++        .background
++        .as_ref()
++        .and_then(|background| background.image_path.as_deref());
++    let name = path
++        .and_then(|path| std::path::Path::new(path).file_name())
++        .map(|name| name.to_string_lossy().into_owned())
++        .unwrap_or_else(|| "No image selected".into());
++    v_flex()
++        .size_full()
++        .p_8()
++        .gap_4()
++        .child(
++            h_flex()
++                .gap_3()
++                .when_some(path, |row, path| {
++                    row.child(
++                        gpui::img(std::path::PathBuf::from(path))
++                            .w(gpui::px(96.0))
++                            .h(gpui::px(64.0))
++                            .object_fit(gpui::ObjectFit::Contain),
++                    )
++                })
++                .child(Label::new(name)),
++        )
++        .child(
++            div()
++                .relative()
++                .w_full()
++                .h(gpui::px(360.0))
++                .overflow_hidden()
++                .child(editor),
++        )
++        .into_any_element()
++}

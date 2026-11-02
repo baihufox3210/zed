@@ -27,7 +27,7 @@ use settings::{
 };
 use std::{
     any::{Any, TypeId, type_name},
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     num::{NonZero, NonZeroU32},
     ops::Range,
@@ -71,6 +71,16 @@ const HEADER_GROUP_TAB_INDEX: isize = 3;
 
 const CONTENT_CONTAINER_TAB_INDEX: isize = 4;
 const CONTENT_GROUP_TAB_INDEX: isize = 5;
+
+mod background {
+    gpui::actions!(
+        background,
+        [
+            /// Opens the background settings page.
+            OpenSettings,
+        ]
+    );
+}
 
 const SIDEBAR_WIDTH: Pixels = px(226.);
 const CONTENT_MIN_WIDTH: Pixels = px(400.);
@@ -456,6 +466,9 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &OpenSettings, cx| {
         open_settings_editor(None, None, None, cx);
     });
+    cx.on_action(|_: &background::OpenSettings, cx| {
+        open_settings_editor_to_page("Background", None, None, cx);
+    });
     cx.on_action(|_: &zed_actions::assistant::OpenSkillCreator, cx| {
         open_skill_creator(pages::SkillCreatorOpenMode::Form, None, cx);
     });
@@ -483,6 +496,10 @@ pub fn init(cx: &mut App) {
                     window_handle,
                     cx,
                 );
+            })
+            .register_action(|_, _: &background::OpenSettings, window, cx| {
+                let window_handle = window.window_handle().downcast::<MultiWorkspace>();
+                open_settings_editor_to_page("Background", None, window_handle, cx);
             })
             .register_action(|_, _: &OpenSettings, window, cx| {
                 let window_handle = window.window_handle().downcast::<MultiWorkspace>();
@@ -557,6 +574,8 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::RestoreOnStartupBehavior>(render_dropdown)
         .add_basic_renderer::<settings::OnNewWindow>(render_dropdown)
         .add_basic_renderer::<settings::BottomDockLayout>(render_dropdown)
+        .add_basic_renderer::<settings::BackgroundSize>(render_dropdown)
+        .add_basic_renderer::<settings::BackgroundPosition>(render_dropdown)
         .add_basic_renderer::<settings::OnLastWindowClosed>(render_dropdown)
         .add_basic_renderer::<settings::CliDefaultOpenBehavior>(render_dropdown)
         .add_basic_renderer::<settings::DefaultOpenBehavior>(render_dropdown)
@@ -613,7 +632,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::CursorShapeContent>(render_dropdown)
         .add_basic_renderer::<settings::EditPredictionPromptFormatContent>(render_dropdown)
         .add_basic_renderer::<settings::EditPredictionDataCollectionChoice>(render_dropdown)
-        .add_basic_renderer::<f32>(render_editable_number_field)
+        .add_basic_renderer::<f32>(render_background_number_field)
         .add_basic_renderer::<settings::AutoCompactThreshold>(render_text_field)
         .add_basic_renderer::<u32>(render_editable_number_field)
         .add_basic_renderer::<u64>(render_editable_number_field)
@@ -5127,6 +5146,114 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
                 .log_err(); // todo(settings_ui) don't log err
             }
         })
+        .into_any_element()
+}
+
+fn render_background_number_field(
+    field: SettingField<f32>,
+    file: SettingsUiFile,
+    metadata: Option<&SettingsFieldMetadata>,
+    title: &'static str,
+    description: &'static str,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    if !field
+        .json_path
+        .is_some_and(|path| path.starts_with("background."))
+    {
+        return render_editable_number_field(field, file, metadata, title, description, window, cx);
+    }
+    let maximum = if field.json_path == Some("background.blur") {
+        30.0
+    } else {
+        1.0
+    };
+    let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+    let value = value.copied().unwrap_or(0.0).clamp(0.0, maximum);
+    let numeric = render_editable_number_field(
+        field,
+        file.clone(),
+        metadata,
+        title,
+        description,
+        window,
+        cx,
+    );
+    let bounds = Rc::new(Cell::new(gpui::Bounds::<Pixels>::default()));
+    let previous = Rc::new(Cell::new(value));
+    let change = Rc::new({
+        let bounds = bounds.clone();
+        move |position: gpui::Point<Pixels>, window: &mut Window, cx: &mut App| {
+            let bounds = bounds.get();
+            if bounds.size.width <= px(0.0) {
+                return;
+            }
+            let fraction = ((position.x - bounds.origin.x) / bounds.size.width).clamp(0.0, 1.0);
+            let value = (fraction * maximum * 100.0).round() / 100.0;
+            if previous.replace(value) == value {
+                return;
+            }
+            update_settings_file(
+                file.clone(),
+                field.json_path,
+                window,
+                cx,
+                move |content, cx| {
+                    (field.write)(content, Some(value), cx);
+                },
+            )
+            .log_err();
+        }
+    });
+    h_flex()
+        .gap_3()
+        .child(
+            div()
+                .id(format!("slider-{title}"))
+                .relative()
+                .w(px(180.0))
+                .h(px(24.0))
+                .cursor_pointer()
+                .child(
+                    div()
+                        .absolute()
+                        .top(px(10.0))
+                        .h(px(4.0))
+                        .w_full()
+                        .bg(cx.theme().colors().border),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top(px(10.0))
+                        .h(px(4.0))
+                        .w(gpui::relative(value / maximum))
+                        .bg(cx.theme().colors().text_accent),
+                )
+                .child(
+                    gpui::canvas(
+                        move |track_bounds, _, _| bounds.set(track_bounds),
+                        |_, _, _, _| {},
+                    )
+                    .size_full(),
+                )
+                .on_mouse_down(gpui::MouseButton::Left, {
+                    let change = change.clone();
+                    move |event, window, cx| change(event.position, window, cx)
+                })
+                .on_mouse_move(move |event, window, cx| {
+                    if event.pressed_button == Some(gpui::MouseButton::Left) {
+                        change(event.position, window, cx);
+                    }
+                }),
+        )
+        .child(numeric)
+        .child(Label::new(if maximum == 1.0 {
+            format!("{:.0}%", value * 100.0)
+        } else {
+            format!("{value:.2} px")
+        }))
         .into_any_element()
 }
 

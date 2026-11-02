@@ -9900,7 +9900,8 @@ impl Render for Workspace {
                     .child(
                         div()
                             .id("workspace")
-                            .bg(colors.background)
+                            .children(settings::background::render_surface(colors.background, cx))
+                            .bg(settings::background::surface_color(colors.background, cx))
                             .relative()
                             .flex_1()
                             .w_full()
@@ -10263,7 +10264,7 @@ impl Render for Workspace {
                                     .absolute()
                                     .overflow_hidden()
                                     .border_color(colors.border)
-                                    .bg(colors.background)
+                                    .bg(settings::background::surface_color(colors.background, cx))
                                     .child(zoomed_element)
                                     .inset_0()
                                     .shadow_lg();
