@@ -4654,7 +4654,16 @@ impl ThreadView {
                                 .w_full()
                                 .gap_1()
                                 .justify_between()
-                                .bg(cx.theme().colors().editor_background)
+                                .bg(
+                                    if settings::background::includes(
+                                        settings::background::Region::Assistant,
+                                        cx,
+                                    ) {
+                                        gpui::transparent_black()
+                                    } else {
+                                        cx.theme().colors().editor_background
+                                    },
+                                )
                                 .hover(|s| s.bg(cx.theme().colors().element_hover))
                                 .when(!is_last, |this| {
                                     this.border_b_1().border_color(cx.theme().colors().border)
@@ -5714,7 +5723,16 @@ impl ThreadView {
                     .flex_wrap()
                     .p_1p5()
                     .gap_1()
-                    .bg(cx.theme().colors().editor_background)
+                    .bg(
+                        if settings::background::includes(
+                            settings::background::Region::Assistant,
+                            cx,
+                        ) {
+                            gpui::transparent_black()
+                        } else {
+                            cx.theme().colors().editor_background
+                        },
+                    )
                     .when(index < queue_len - 1, |this| {
                         this.border_b_1()
                             .border_color(cx.theme().colors().border_variant)
@@ -7419,7 +7437,7 @@ impl ThreadView {
                                     .py_3()
                                     .px_2()
                                     .rounded_md()
-                                    .bg(cx.theme().colors().editor_background)
+                                    .bg(if settings::background::includes(settings::background::Region::Assistant, cx) { gpui::transparent_black() } else { cx.theme().colors().editor_background })
                                     .border_1()
                                     .when(is_indented, |this| {
                                         this.py_2().px_2().when(opaque_window, |this| {
@@ -7457,7 +7475,7 @@ impl ThreadView {
                                     .rounded_sm()
                                     .border_1()
                                     .border_color(cx.theme().colors().border)
-                                    .bg(cx.theme().colors().editor_background)
+                                    .bg(if settings::background::includes(settings::background::Region::Assistant, cx) { gpui::transparent_black() } else { cx.theme().colors().editor_background })
                                     .overflow_hidden();
 
                                 let is_loading_contents = self.is_loading_contents;
@@ -7824,7 +7842,13 @@ impl ThreadView {
                 .size_full()
                 .absolute()
                 .inset_0()
-                .bg(cx.theme().colors().panel_background)
+                .bg(
+                    if settings::background::includes(settings::background::Region::Assistant, cx) {
+                        gpui::transparent_black()
+                    } else {
+                        cx.theme().colors().panel_background
+                    },
+                )
                 .opacity(0.8)
                 .block_mouse_except_scroll()
                 .on_click(cx.listener(Self::cancel_editing));
@@ -7950,7 +7974,13 @@ impl ThreadView {
             .rounded_md()
             .border_1()
             .border_color(cx.theme().colors().border)
-            .bg(cx.theme().colors().editor_background)
+            .bg(
+                if settings::background::includes(settings::background::Region::Assistant, cx) {
+                    gpui::transparent_black()
+                } else {
+                    cx.theme().colors().editor_background
+                },
+            )
             .child(div().w_full().child(editor))
             .child(
                 h_flex()
@@ -10121,7 +10151,16 @@ impl ThreadView {
                         .border_1()
                         .when(failed_or_canceled, |this| this.border_dashed())
                         .border_color(self.tool_card_border_color(cx))
-                        .bg(cx.theme().colors().editor_background)
+                        .bg(
+                            if settings::background::includes(
+                                settings::background::Region::Assistant,
+                                cx,
+                            ) {
+                                gpui::transparent_black()
+                            } else {
+                                cx.theme().colors().editor_background
+                            },
+                        )
                         .overflow_hidden()
                 } else {
                     this.my_1()
@@ -10296,7 +10335,16 @@ impl ThreadView {
                                 .min_w_0()
                                 .px_2()
                                 .py_1p5()
-                                .bg(cx.theme().colors().editor_background)
+                                .bg(
+                                    if settings::background::includes(
+                                        settings::background::Region::Assistant,
+                                        cx,
+                                    ) {
+                                        gpui::transparent_black()
+                                    } else {
+                                        cx.theme().colors().editor_background
+                                    },
+                                )
                                 .when(host_ix < hosts.len() - 1, |this| {
                                     this.border_b_1().border_color(cx.theme().colors().border)
                                 })
@@ -10820,7 +10868,13 @@ impl ThreadView {
             .gap_1()
             .px_2()
             .py_1p5()
-            .bg(cx.theme().colors().editor_background)
+            .bg(
+                if settings::background::includes(settings::background::Region::Assistant, cx) {
+                    gpui::transparent_black()
+                } else {
+                    cx.theme().colors().editor_background
+                },
+            )
             .map(|this| {
                 if is_redirected {
                     this.child(captioned_path("Source".into(), requested_display, cx))
@@ -11444,7 +11498,13 @@ impl ThreadView {
             .p_3()
             .gap_1()
             .rounded_b_md()
-            .bg(cx.theme().colors().editor_background)
+            .bg(
+                if settings::background::includes(settings::background::Region::Assistant, cx) {
+                    gpui::transparent_black()
+                } else {
+                    cx.theme().colors().editor_background
+                },
+            )
             .child(bar(0, "w_4_5"))
             .child(bar(1, "w_1_4"))
             .child(bar(2, "w_2_4"))

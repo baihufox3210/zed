@@ -2844,7 +2844,11 @@ impl Pane {
         let knockout_item_color = if is_active {
             cx.theme().colors().tab_active_background
         } else {
-            cx.theme().colors().tab_bar_background
+            if settings::background::includes(settings::background::Region::Chrome, cx) {
+                gpui::transparent_black()
+            } else {
+                cx.theme().colors().tab_bar_background
+            }
         };
 
         let (icon_decoration, icon_color) = if matches!(diagnostic, &DiagnosticSeverity::ERROR) {
@@ -4464,6 +4468,13 @@ impl Render for Pane {
         };
 
         v_flex()
+            .when(self.active_item().is_none(), |pane| {
+                pane.bg(settings::background::region_color(
+                    cx.theme().colors().editor_background,
+                    settings::background::Region::Editor,
+                    cx,
+                ))
+            })
             .key_context(key_context)
             .track_focus(&self.focus_handle(cx))
             .size_full()

@@ -98,7 +98,11 @@ impl RenderOnce for TabBar {
             .flex_none()
             .w_full()
             .h(Tab::container_height(cx))
-            .bg(cx.theme().colors().tab_bar_background)
+            .bg(settings::background::region_color(
+                cx.theme().colors().tab_bar_background,
+                settings::background::Region::Chrome,
+                cx,
+            ))
             .when(!self.start_children.is_empty(), |this| {
                 this.child(
                     h_flex()

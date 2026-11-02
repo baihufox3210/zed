@@ -9790,7 +9790,14 @@ impl Render for Workspace {
                 div()
                     .h_full()
                     .w(relative(size))
-                    .bg(cx.theme().colors().editor_background)
+                    .bg(
+                        if settings::background::includes(settings::background::Region::Editor, cx)
+                        {
+                            gpui::transparent_black()
+                        } else {
+                            cx.theme().colors().editor_background
+                        },
+                    )
                     .border_color(cx.theme().colors().pane_group_border)
             })
         };
@@ -9893,8 +9900,11 @@ impl Render for Workspace {
                     .child(
                         div()
                             .id("workspace")
-                            .children(settings::background::render_surface(colors.background, cx))
-                            .bg(settings::background::surface_color(colors.background, cx))
+                            .bg(if settings::background::is_enabled(cx) {
+                                gpui::transparent_black()
+                            } else {
+                                colors.background
+                            })
                             .relative()
                             .flex_1()
                             .w_full()
@@ -10257,7 +10267,11 @@ impl Render for Workspace {
                                     .absolute()
                                     .overflow_hidden()
                                     .border_color(colors.border)
-                                    .bg(settings::background::surface_color(colors.background, cx))
+                                    .bg(if settings::background::is_enabled(cx) {
+                                        gpui::transparent_black()
+                                    } else {
+                                        colors.background
+                                    })
                                     .child(zoomed_element)
                                     .inset_0()
                                     .shadow_lg();

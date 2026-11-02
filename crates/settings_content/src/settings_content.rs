@@ -339,8 +339,41 @@ pub struct SettingsContent {
     pub instrumentation: Option<InstrumentationSettingsContent>,
 }
 
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum BackgroundScope {
+    #[default]
+    Window,
+    Editor,
+    Custom,
+}
+
+impl crate::merge_from::MergeFrom for BackgroundScope {
+    fn merge_from(&mut self, other: &Self) {
+        *self = *other;
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct BackgroundSettingsContent {
+    pub scope: Option<BackgroundScope>,
+    pub editor: Option<bool>,
+    pub panels: Option<bool>,
+    pub assistant: Option<bool>,
+    pub terminal: Option<bool>,
+    pub chrome: Option<bool>,
     pub enabled: Option<bool>,
     pub image_path: Option<String>,
     pub image_opacity: Option<f32>,

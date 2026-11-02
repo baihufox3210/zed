@@ -1328,7 +1328,12 @@ impl Element for TerminalElement {
 
                 let search_matches = self.terminal.read(cx).matches.clone();
 
-                let background_color = theme.colors().terminal_background;
+                let background_color =
+                    if settings::background::includes(settings::background::Region::Terminal, cx) {
+                        gpui::transparent_black()
+                    } else {
+                        theme.colors().terminal_background
+                    };
 
                 let (hover_tooltip, hover_match) = self.terminal.update(cx, |terminal, cx| {
                     terminal.set_size(dimensions);

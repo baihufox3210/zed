@@ -1337,19 +1337,21 @@ impl Render for Dock {
                 }
             };
 
+            let background_region = match self.active_panel().map(|panel| panel.persistent_name()) {
+                Some("AgentPanel") => settings::background::Region::Assistant,
+                Some("TerminalPanel") => settings::background::Region::Terminal,
+                _ => settings::background::Region::Panels,
+            };
             div()
                 .id("dock-panel")
                 .relative()
-                .children(settings::background::render_surface(
-                    cx.theme().colors().panel_background,
-                    cx,
-                ))
                 .key_context(dispatch_context)
                 .track_focus(&self.focus_handle(cx))
                 .focus_follows_mouse(WorkspaceSettings::get_global(cx).focus_follows_mouse, cx)
                 .flex()
-                .bg(settings::background::surface_color(
+                .bg(settings::background::region_color(
                     cx.theme().colors().panel_background,
+                    background_region,
                     cx,
                 ))
                 .border_color(cx.theme().colors().border)
@@ -1385,10 +1387,6 @@ impl Render for Dock {
             div()
                 .id("dock-panel")
                 .relative()
-                .children(settings::background::render_surface(
-                    cx.theme().colors().panel_background,
-                    cx,
-                ))
                 .key_context(dispatch_context)
                 .track_focus(&self.focus_handle(cx))
         }

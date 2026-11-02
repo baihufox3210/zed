@@ -11,13 +11,19 @@ index cc60cc0208..b7f216352d 100644
   "language",
   "language_model",
 diff --git a/assets/settings/default.json b/assets/settings/default.json
-index 8172ebde47..6cc14a889a 100644
+index 8172ebde47..baf950e2c8 100644
 --- a/assets/settings/default.json
 +++ b/assets/settings/default.json
-@@ -1,5 +1,14 @@
+@@ -1,5 +1,20 @@
  {
    "$schema": "zed://schemas/settings",
 +  "background": {
++    "scope": "window",
++    "editor": true,
++    "panels": true,
++    "assistant": true,
++    "terminal": true,
++    "chrome": true,
 +    "enabled": false,
 +    "image_opacity": 1.0,
 +    "editor_opacity": 0.8,
@@ -30,134 +36,231 @@ index 8172ebde47..6cc14a889a 100644
    //
    // `mode` is one of:
 diff --git a/crates/agent_ui/src/agent_panel.rs b/crates/agent_ui/src/agent_panel.rs
-index c5a19bccc8..7760b4dc77 100644
+index c5a19bccc8..1bd9c82ba9 100644
 --- a/crates/agent_ui/src/agent_panel.rs
 +++ b/crates/agent_ui/src/agent_panel.rs
-@@ -6617,7 +6617,10 @@ impl Render for AgentPanel {
+@@ -5587,7 +5587,11 @@ impl AgentPanel {
+                             .absolute()
+                             .right_0()
+                             .h_full()
+-                            .bg(cx.theme().colors().tab_bar_background)
++                            .bg(settings::background::region_color(
++                                cx.theme().colors().tab_bar_background,
++                                settings::background::Region::Assistant,
++                                cx,
++                            ))
+                             .child(
+                                 IconButton::new("edit_tile", IconName::Pencil)
+                                     .icon_size(IconSize::Small)
+@@ -6248,7 +6252,11 @@ impl AgentPanel {
+             .h(Tab::container_height(cx))
+             .flex_shrink_0()
+             .max_w_full()
+-            .bg(cx.theme().colors().tab_bar_background)
++            .bg(settings::background::region_color(
++                cx.theme().colors().tab_bar_background,
++                settings::background::Region::Assistant,
++                cx,
++            ))
+             .border_b_1()
+             .border_color(cx.theme().colors().border)
+             .child(toolbar_content)
+@@ -6617,7 +6625,11 @@ impl Render for AgentPanel {
              .size_full()
              .justify_between()
              .track_focus(&self.focus_handle)
 -            .bg(cx.theme().colors().panel_background)
-+            .bg(settings::background::surface_color(
++            .bg(settings::background::region_color(
 +                cx.theme().colors().panel_background,
++                settings::background::Region::Assistant,
 +                cx,
 +            ))
              .on_action(cx.listener(|this, action: &NewThread, window, cx| {
                  this.new_thread(action, window, cx);
              }))
+diff --git a/crates/agent_ui/src/conversation_view.rs b/crates/agent_ui/src/conversation_view.rs
+index 42af4ccc4f..d1cb400b3d 100644
+--- a/crates/agent_ui/src/conversation_view.rs
++++ b/crates/agent_ui/src/conversation_view.rs
+@@ -4023,7 +4023,7 @@ impl Render for ConversationView {
+         v_flex()
+             .track_focus(&self.focus_handle)
+             .size_full()
+-            .bg(cx.theme().colors().panel_background)
++            .bg(if settings::background::includes(settings::background::Region::Assistant, cx) { gpui::transparent_black() } else { cx.theme().colors().panel_background })
+             .child(v_flex().flex_1().min_h_0().child(content))
+             .when(self.has_saved_input(), |this| {
+                 this.child(
+diff --git a/crates/agent_ui/src/conversation_view/thread_view.rs b/crates/agent_ui/src/conversation_view/thread_view.rs
+index b6d1286200..8bfdebee4c 100644
+--- a/crates/agent_ui/src/conversation_view/thread_view.rs
++++ b/crates/agent_ui/src/conversation_view/thread_view.rs
+@@ -4561,7 +4561,16 @@ impl ThreadView {
+                                 .w_full()
+                                 .gap_1()
+                                 .justify_between()
+-                                .bg(cx.theme().colors().editor_background)
++                                .bg(
++                                    if settings::background::includes(
++                                        settings::background::Region::Assistant,
++                                        cx,
++                                    ) {
++                                        gpui::transparent_black()
++                                    } else {
++                                        cx.theme().colors().editor_background
++                                    },
++                                )
+                                 .hover(|s| s.bg(cx.theme().colors().element_hover))
+                                 .when(!is_last, |this| {
+                                     this.border_b_1().border_color(cx.theme().colors().border)
+@@ -5606,7 +5615,16 @@ impl ThreadView {
+                     .flex_wrap()
+                     .p_1p5()
+                     .gap_1()
+-                    .bg(cx.theme().colors().editor_background)
++                    .bg(
++                        if settings::background::includes(
++                            settings::background::Region::Assistant,
++                            cx,
++                        ) {
++                            gpui::transparent_black()
++                        } else {
++                            cx.theme().colors().editor_background
++                        },
++                    )
+                     .when(index < queue_len - 1, |this| {
+                         this.border_b_1()
+                             .border_color(cx.theme().colors().border_variant)
+@@ -7311,7 +7329,7 @@ impl ThreadView {
+                                     .py_3()
+                                     .px_2()
+                                     .rounded_md()
+-                                    .bg(cx.theme().colors().editor_background)
++                                    .bg(if settings::background::includes(settings::background::Region::Assistant, cx) { gpui::transparent_black() } else { cx.theme().colors().editor_background })
+                                     .border_1()
+                                     .when(is_indented, |this| {
+                                         this.py_2().px_2().when(opaque_window, |this| {
+@@ -7349,7 +7367,7 @@ impl ThreadView {
+                                     .rounded_sm()
+                                     .border_1()
+                                     .border_color(cx.theme().colors().border)
+-                                    .bg(cx.theme().colors().editor_background)
++                                    .bg(if settings::background::includes(settings::background::Region::Assistant, cx) { gpui::transparent_black() } else { cx.theme().colors().editor_background })
+                                     .overflow_hidden();
+ 
+                                 let is_loading_contents = self.is_loading_contents;
+@@ -7718,7 +7736,13 @@ impl ThreadView {
+                 .size_full()
+                 .absolute()
+                 .inset_0()
+-                .bg(cx.theme().colors().panel_background)
++                .bg(
++                    if settings::background::includes(settings::background::Region::Assistant, cx) {
++                        gpui::transparent_black()
++                    } else {
++                        cx.theme().colors().panel_background
++                    },
++                )
+                 .opacity(0.8)
+                 .block_mouse_except_scroll()
+                 .on_click(cx.listener(Self::cancel_editing));
+@@ -7844,7 +7868,13 @@ impl ThreadView {
+             .rounded_md()
+             .border_1()
+             .border_color(cx.theme().colors().border)
+-            .bg(cx.theme().colors().editor_background)
++            .bg(
++                if settings::background::includes(settings::background::Region::Assistant, cx) {
++                    gpui::transparent_black()
++                } else {
++                    cx.theme().colors().editor_background
++                },
++            )
+             .child(div().w_full().child(editor))
+             .child(
+                 h_flex()
+@@ -9920,7 +9950,16 @@ impl ThreadView {
+                         .border_1()
+                         .when(failed_or_canceled, |this| this.border_dashed())
+                         .border_color(self.tool_card_border_color(cx))
+-                        .bg(cx.theme().colors().editor_background)
++                        .bg(
++                            if settings::background::includes(
++                                settings::background::Region::Assistant,
++                                cx,
++                            ) {
++                                gpui::transparent_black()
++                            } else {
++                                cx.theme().colors().editor_background
++                            },
++                        )
+                         .overflow_hidden()
+                 } else {
+                     this.my_1()
+@@ -10095,7 +10134,16 @@ impl ThreadView {
+                                 .min_w_0()
+                                 .px_2()
+                                 .py_1p5()
+-                                .bg(cx.theme().colors().editor_background)
++                                .bg(
++                                    if settings::background::includes(
++                                        settings::background::Region::Assistant,
++                                        cx,
++                                    ) {
++                                        gpui::transparent_black()
++                                    } else {
++                                        cx.theme().colors().editor_background
++                                    },
++                                )
+                                 .when(host_ix < hosts.len() - 1, |this| {
+                                     this.border_b_1().border_color(cx.theme().colors().border)
+                                 })
+@@ -10619,7 +10667,13 @@ impl ThreadView {
+             .gap_1()
+             .px_2()
+             .py_1p5()
+-            .bg(cx.theme().colors().editor_background)
++            .bg(
++                if settings::background::includes(settings::background::Region::Assistant, cx) {
++                    gpui::transparent_black()
++                } else {
++                    cx.theme().colors().editor_background
++                },
++            )
+             .map(|this| {
+                 if is_redirected {
+                     this.child(captioned_path("Source".into(), requested_display, cx))
+@@ -11243,7 +11297,13 @@ impl ThreadView {
+             .p_3()
+             .gap_1()
+             .rounded_b_md()
+-            .bg(cx.theme().colors().editor_background)
++            .bg(
++                if settings::background::includes(settings::background::Region::Assistant, cx) {
++                    gpui::transparent_black()
++                } else {
++                    cx.theme().colors().editor_background
++                },
++            )
+             .child(bar(0, "w_4_5"))
+             .child(bar(1, "w_1_4"))
+             .child(bar(2, "w_2_4"))
 diff --git a/crates/editor/src/editor.rs b/crates/editor/src/editor.rs
-index 5f665ebf04..40b40b2497 100644
+index 5f665ebf04..2c9f357566 100644
 --- a/crates/editor/src/editor.rs
 +++ b/crates/editor/src/editor.rs
-@@ -119,6 +119,7 @@ pub use git::{
- pub(crate) use git::{DiffHunkKey, StoredReviewComment};
- use git::{DiffReviewDragState, DiffReviewOverlay, InlineBlamePopover};
- pub(crate) use git::{DisplayDiffHunk, PhantomDiffReviewIndicator};
-+use gpui::ReadGlobal as _;
- pub use hover_popover::hover_markdown_style;
- pub use inlays::Inlay;
- pub use inline_input::InlineInputState;
-@@ -11544,7 +11545,19 @@ impl Editor {
+@@ -11544,7 +11544,11 @@ impl Editor {
          let background = match self.mode {
              EditorMode::SingleLine => cx.theme().system().transparent,
              EditorMode::AutoHeight { .. } => cx.theme().system().transparent,
 -            EditorMode::Full { .. } => cx.theme().colors().editor_background,
-+            EditorMode::Full { .. } => {
-+                let opacity = SettingsStore::global(cx)
-+                    .merged_settings()
-+                    .background
-+                    .as_ref()
-+                    .filter(|background| {
-+                        background.enabled == Some(true) && background.image_path.is_some()
-+                    })
-+                    .map(|background| background.editor_opacity.unwrap_or(0.8))
-+                    .unwrap_or(1.0)
-+                    .clamp(0.0, 1.0);
-+                cx.theme().colors().editor_background.opacity(opacity)
-+            }
++            EditorMode::Full { .. } => settings::background::region_color(
++                cx.theme().colors().editor_background,
++                settings::background::Region::Editor,
++                cx,
++            ),
              EditorMode::Minimap { .. } => cx.theme().colors().editor_background.opacity(0.7),
          };
- 
-@@ -12688,7 +12701,79 @@ impl Focusable for Editor {
- 
- impl Render for Editor {
-     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
--        EditorElement::new(&cx.entity(), self.create_style(cx))
-+        let style = self.create_style(cx);
-+        if !matches!(self.mode, EditorMode::Full { .. }) {
-+            return EditorElement::new(&cx.entity(), style).into_any_element();
-+        }
-+        let background = SettingsStore::global(cx)
-+            .merged_settings()
-+            .background
-+            .as_ref()
-+            .filter(|background| background.enabled == Some(true))
-+            .and_then(|background| {
-+                Some((
-+                    background.image_path.as_ref()?.clone(),
-+                    background.image_opacity.unwrap_or(1.0).clamp(0.0, 1.0),
-+                    background.size.unwrap_or_default(),
-+                    background.position.unwrap_or_default(),
-+                    background.blur.unwrap_or(0.0),
-+                    background.overlay_opacity.unwrap_or(0.0).clamp(0.0, 1.0),
-+                ))
-+            });
-+        if background.is_none() {
-+            return EditorElement::new(&cx.entity(), style).into_any_element();
-+        }
-+        gpui::div()
-+            .relative()
-+            .size_full()
-+            .overflow_hidden()
-+            .bg(cx.theme().colors().editor_background)
-+            .when_some(
-+                background,
-+                |container, (path, opacity, size, position, blur, overlay_opacity)| {
-+                    let fit = match size {
-+                        settings::BackgroundSize::Cover => gpui::ObjectFit::Cover,
-+                        settings::BackgroundSize::Contain => gpui::ObjectFit::Contain,
-+                        settings::BackgroundSize::Stretch => gpui::ObjectFit::Fill,
-+                    };
-+                    let (horizontal, vertical) = match position {
-+                        settings::BackgroundPosition::Center => (0.5, 0.5),
-+                        settings::BackgroundPosition::Top => (0.5, 0.0),
-+                        settings::BackgroundPosition::Bottom => (0.5, 1.0),
-+                        settings::BackgroundPosition::Left => (0.0, 0.5),
-+                        settings::BackgroundPosition::Right => (1.0, 0.5),
-+                    };
-+                    let fallback_color = cx.theme().colors().editor_background;
-+                    container
-+                        .child(
-+                            gpui::img(std::path::PathBuf::from(path))
-+                                .object_fit(fit)
-+                                .image_position(horizontal, vertical)
-+                                .image_blur(blur)
-+                                .with_fallback(move || {
-+                                    gpui::div()
-+                                        .size_full()
-+                                        .bg(fallback_color)
-+                                        .into_any_element()
-+                                })
-+                                .absolute()
-+                                .inset_0()
-+                                .size_full()
-+                                .opacity(opacity),
-+                        )
-+                        .when(overlay_opacity > 0.0, |container| {
-+                            container.child(
-+                                gpui::div()
-+                                    .absolute()
-+                                    .inset_0()
-+                                    .size_full()
-+                                    .bg(gpui::black().opacity(overlay_opacity)),
-+                            )
-+                        })
-+                },
-+            )
-+            .child(EditorElement::new(&cx.entity(), style))
-+            .into_any_element()
-     }
- }
  
 diff --git a/crates/git_ui/src/git_panel.rs b/crates/git_ui/src/git_panel.rs
 index 33ca210eb8..a0ca4b5ab5 100644
@@ -298,6 +401,25 @@ index 2c77e5f32a..839e9e4537 100644
  #[derive(Clone)]
  enum ImageDecoder {}
  
+diff --git a/crates/platform_title_bar/src/platform_title_bar.rs b/crates/platform_title_bar/src/platform_title_bar.rs
+index b69bb0d1ff..7c589ddb03 100644
+--- a/crates/platform_title_bar/src/platform_title_bar.rs
++++ b/crates/platform_title_bar/src/platform_title_bar.rs
+@@ -306,7 +306,13 @@ impl Render for PlatformTitleBar {
+                     .border(theme::CLIENT_SIDE_DECORATION_BORDER)
+                     .border_color(titlebar_color),
+             })
+-            .bg(titlebar_color)
++            .bg(
++                if settings::background::includes(settings::background::Region::Chrome, cx) {
++                    gpui::transparent_black()
++                } else {
++                    titlebar_color
++                },
++            )
+             .content_stretch()
+             .child(
+                 div()
 diff --git a/crates/project_panel/src/project_panel.rs b/crates/project_panel/src/project_panel.rs
 index cc8b23d2a0..1a1e1cf0c3 100644
 --- a/crates/project_panel/src/project_panel.rs
@@ -311,6 +433,193 @@ index cc8b23d2a0..1a1e1cf0c3 100644
          },
          hover: if is_sticky {
              colors.panel_overlay_hover
+diff --git a/crates/settings/src/background.rs b/crates/settings/src/background.rs
+new file mode 100644
+index 0000000000..bbd274d8e8
+--- /dev/null
++++ b/crates/settings/src/background.rs
+@@ -0,0 +1,181 @@
++use crate::{BackgroundPosition, BackgroundSize, SettingsStore};
++use gpui::{AnyElement, App, Hsla, ReadGlobal as _, prelude::*};
++
++pub fn is_enabled(cx: &App) -> bool {
++    SettingsStore::global(cx)
++        .merged_settings()
++        .background
++        .as_ref()
++        .is_some_and(|settings| {
++            settings.enabled == Some(true)
++                && settings.image_path.is_some()
++                && [
++                    Region::Editor,
++                    Region::Panels,
++                    Region::Assistant,
++                    Region::Terminal,
++                    Region::Chrome,
++                ]
++                .into_iter()
++                .any(|region| selected(settings, region))
++        })
++}
++
++#[derive(Clone, Copy)]
++pub enum Region {
++    Editor,
++    Panels,
++    Assistant,
++    Terminal,
++    Chrome,
++}
++
++pub fn includes(region: Region, cx: &App) -> bool {
++    if !is_enabled(cx) {
++        return false;
++    }
++    let Some(settings) = SettingsStore::global(cx)
++        .merged_settings()
++        .background
++        .as_ref()
++    else {
++        return false;
++    };
++    selected(settings, region)
++}
++
++fn selected(settings: &crate::BackgroundSettingsContent, region: Region) -> bool {
++    match settings.scope.unwrap_or_default() {
++        crate::BackgroundScope::Window => true,
++        crate::BackgroundScope::Editor => matches!(region, Region::Editor),
++        crate::BackgroundScope::Custom => match region {
++            Region::Editor => settings.editor.unwrap_or(true),
++            Region::Panels => settings.panels.unwrap_or(true),
++            Region::Assistant => settings.assistant.unwrap_or(true),
++            Region::Terminal => settings.terminal.unwrap_or(true),
++            Region::Chrome => settings.chrome.unwrap_or(true),
++        },
++    }
++}
++
++pub fn region_color(color: Hsla, region: Region, cx: &App) -> Hsla {
++    if includes(region, cx) {
++        color.opacity(0.0)
++    } else {
++        color
++    }
++}
++
++pub fn render_window(color: Hsla, cx: &App) -> Option<AnyElement> {
++    if !is_enabled(cx) {
++        return None;
++    }
++    render_image(color, cx)
++}
++
++pub fn surface_color(color: Hsla, cx: &App) -> Hsla {
++    region_color(color, Region::Panels, cx)
++}
++
++fn render_image(color: Hsla, cx: &App) -> Option<AnyElement> {
++    let settings = SettingsStore::global(cx)
++        .merged_settings()
++        .background
++        .as_ref()?;
++    if settings.enabled != Some(true) {
++        return None;
++    }
++    let path = std::path::PathBuf::from(settings.image_path.as_ref()?);
++    let fit = match settings.size.unwrap_or_default() {
++        BackgroundSize::Cover => gpui::ObjectFit::Cover,
++        BackgroundSize::Contain => gpui::ObjectFit::Contain,
++        BackgroundSize::Stretch => gpui::ObjectFit::Fill,
++    };
++    let (horizontal, vertical) = match settings.position.unwrap_or_default() {
++        BackgroundPosition::Center => (0.5, 0.5),
++        BackgroundPosition::Top => (0.5, 0.0),
++        BackgroundPosition::Bottom => (0.5, 1.0),
++        BackgroundPosition::Left => (0.0, 0.5),
++        BackgroundPosition::Right => (1.0, 0.5),
++    };
++    Some(
++        gpui::div()
++            .absolute()
++            .inset_0()
++            .size_full()
++            .overflow_hidden()
++            .bg(color)
++            .child(
++                gpui::img(path)
++                    .absolute()
++                    .inset_0()
++                    .size_full()
++                    .object_fit(fit)
++                    .image_position(horizontal, vertical)
++                    .image_blur(settings.blur.unwrap_or(0.0))
++                    .opacity(settings.image_opacity.unwrap_or(1.0).clamp(0.0, 1.0)),
++            )
++            .child(
++                gpui::div()
++                    .absolute()
++                    .inset_0()
++                    .size_full()
++                    .bg(gpui::black()
++                        .opacity(settings.overlay_opacity.unwrap_or(0.0).clamp(0.0, 1.0))),
++            )
++            .child(
++                gpui::div()
++                    .absolute()
++                    .inset_0()
++                    .size_full()
++                    .bg(color.opacity(settings.editor_opacity.unwrap_or(0.8).clamp(0.0, 1.0))),
++            )
++            .into_any_element(),
++    )
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::{BackgroundScope, BackgroundSettingsContent};
++
++    #[test]
++    fn scope_selects_regions_without_losing_custom_choices() {
++        let mut settings = BackgroundSettingsContent {
++            scope: Some(BackgroundScope::Custom),
++            editor: Some(false),
++            panels: Some(true),
++            assistant: Some(false),
++            terminal: Some(true),
++            chrome: Some(false),
++            ..Default::default()
++        };
++        let regions = [
++            Region::Editor,
++            Region::Panels,
++            Region::Assistant,
++            Region::Terminal,
++            Region::Chrome,
++        ];
++        assert_eq!(
++            regions.map(|region| selected(&settings, region)),
++            [false, true, false, true, false]
++        );
++        settings.scope = Some(BackgroundScope::Window);
++        assert!(
++            regions
++                .into_iter()
++                .all(|region| selected(&settings, region))
++        );
++        settings.scope = Some(BackgroundScope::Editor);
++        assert_eq!(
++            regions.map(|region| selected(&settings, region)),
++            [true, false, false, false, false]
++        );
++        settings.scope = Some(BackgroundScope::Custom);
++        assert_eq!(
++            regions.map(|region| selected(&settings, region)),
++            [false, true, false, true, false]
++        );
++    }
++}
 diff --git a/crates/settings/src/settings.rs b/crates/settings/src/settings.rs
 index ce7731fd83..45eb666326 100644
 --- a/crates/settings/src/settings.rs
@@ -333,7 +642,7 @@ index 3cc073635e..670cf06969 100644
              agent_servers: None,
              audio: None,
 diff --git a/crates/settings_content/src/settings_content.rs b/crates/settings_content/src/settings_content.rs
-index c97679dfae..6b335c9902 100644
+index c97679dfae..f3440ce2d7 100644
 --- a/crates/settings_content/src/settings_content.rs
 +++ b/crates/settings_content/src/settings_content.rs
 @@ -184,6 +184,8 @@ pub struct SettingsContent {
@@ -345,12 +654,45 @@ index c97679dfae..6b335c9902 100644
      #[serde(flatten)]
      pub editor: EditorSettingsContent,
  
-@@ -337,6 +339,74 @@ pub struct SettingsContent {
+@@ -337,6 +339,107 @@ pub struct SettingsContent {
      pub instrumentation: Option<InstrumentationSettingsContent>,
  }
  
++#[derive(
++    Clone,
++    Copy,
++    Debug,
++    PartialEq,
++    Eq,
++    Default,
++    Serialize,
++    Deserialize,
++    JsonSchema,
++    strum::VariantArray,
++    strum::VariantNames,
++)]
++#[serde(rename_all = "snake_case")]
++pub enum BackgroundScope {
++    #[default]
++    Window,
++    Editor,
++    Custom,
++}
++
++impl crate::merge_from::MergeFrom for BackgroundScope {
++    fn merge_from(&mut self, other: &Self) {
++        *self = *other;
++    }
++}
++
 +#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 +pub struct BackgroundSettingsContent {
++    pub scope: Option<BackgroundScope>,
++    pub editor: Option<bool>,
++    pub panels: Option<bool>,
++    pub assistant: Option<bool>,
++    pub terminal: Option<bool>,
++    pub chrome: Option<bool>,
 +    pub enabled: Option<bool>,
 +    pub image_path: Option<String>,
 +    pub image_opacity: Option<f32>,
@@ -420,7 +762,7 @@ index c97679dfae..6b335c9902 100644
  /// Configuration for developer-oriented instrumentation tools that collect
  /// diagnostic data about a running Zed instance.
  #[with_fallible_options]
-@@ -405,7 +475,7 @@ impl SettingsContent {
+@@ -405,7 +508,7 @@ impl SettingsContent {
  fallible_options::flattened_deserialize!(SettingsContent {
      sections: { project, theme, extension, workspace, editor, remote },
      options: {
@@ -442,16 +784,17 @@ index b0b2f7c00f..8eb7f6cabf 100644
  language.workspace = true
  language_model.workspace = true
 diff --git a/crates/settings_ui/src/page_data.rs b/crates/settings_ui/src/page_data.rs
-index eefb373eb8..7eeb6cd2e3 100644
+index eefb373eb8..18de6942e1 100644
 --- a/crates/settings_ui/src/page_data.rs
 +++ b/crates/settings_ui/src/page_data.rs
-@@ -1,4 +1,4 @@
+@@ -1,4 +1,5 @@
 -use gpui::{Action as _, App};
++use gpui::ReadGlobal as _;
 +use gpui::{Action as _, App, AppContext as _, PathPromptOptions};
  use itertools::Itertools as _;
  use settings::{
      AudioInputDeviceName, AudioOutputDeviceName, EditPredictionDataCollectionChoice,
-@@ -8,6 +8,7 @@ use std::sync::{Arc, OnceLock};
+@@ -8,6 +9,7 @@ use std::sync::{Arc, OnceLock};
  use strum::{EnumMessage, IntoDiscriminant as _, VariantArray};
  use theme::SystemAppearance;
  use ui::IntoElement;
@@ -459,15 +802,15 @@ index eefb373eb8..7eeb6cd2e3 100644
  
  use crate::{
      ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
-@@ -66,6 +67,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
+@@ -66,6 +68,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
      vec![
          general_page(cx),
          appearance_page(),
-+        background_page(),
++        background_page(cx),
          keymap_page(),
          editor_page(),
          languages_and_tools_page(cx),
-@@ -82,6 +84,306 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
+@@ -82,6 +85,398 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
      ]
  }
  
@@ -509,9 +852,24 @@ index eefb373eb8..7eeb6cd2e3 100644
 +    .detach();
 +}
 +
-+fn background_page() -> SettingsPage {
-+    let items = vec![
-+        SettingsPageItem::SectionHeader("Background"),
++fn background_page(cx: &App) -> SettingsPage {
++    let mut items = vec![
++        SettingsPageItem::SectionHeader("Background Range"),
++        SettingsPageItem::SettingItem(SettingItem {
++            title: "Apply Background To",
++            description: "Window: one continuous image across Zed. Editor: editing area only. Custom: choose areas below.",
++            field: Box::new(SettingField {
++                organization_override: None,
++                json_path: Some("background.scope"),
++                pick: |content| content.background.as_ref()?.scope.as_ref(),
++                write: |content, value, _| {
++                    content.background.get_or_insert_default().scope = value;
++                },
++            }),
++            metadata: None,
++            files: USER,
++        }),
++        SettingsPageItem::SectionHeader("Image"),
 +        SettingsPageItem::SubPageLink(SubPageLink {
 +            title: "Background Preview".into(),
 +            r#type: Default::default(),
@@ -662,23 +1020,10 @@ index eefb373eb8..7eeb6cd2e3 100644
 +            metadata: None,
 +            files: USER,
 +        }),
-+        SettingsPageItem::SettingItem(SettingItem {
-+            title: "Image Path",
-+            description: "Path to a PNG, JPEG, or WebP image.",
-+            field: Box::new(SettingField {
-+                organization_override: None,
-+                json_path: Some("background.image_path"),
-+                pick: |content| content.background.as_ref()?.image_path.as_ref(),
-+                write: |content, value, _| {
-+                    content.background.get_or_insert_default().image_path = value;
-+                },
-+            }),
-+            metadata: None,
-+            files: USER,
-+        }),
++        SettingsPageItem::SectionHeader("Appearance"),
 +        SettingsPageItem::SettingItem(SettingItem {
 +            title: "Image Opacity",
-+            description: "Image opacity from 0 to 1.",
++            description: "Visibility of the image, from 0 to 100%.",
 +            field: Box::new(SettingField {
 +                organization_override: None,
 +                json_path: Some("background.image_opacity"),
@@ -692,8 +1037,8 @@ index eefb373eb8..7eeb6cd2e3 100644
 +            files: USER,
 +        }),
 +        SettingsPageItem::SettingItem(SettingItem {
-+            title: "Editor Opacity",
-+            description: "Editor background opacity from 0 to 1.",
++            title: "Surface Tint",
++            description: "Higher values make the image less visible behind selected areas. Text stays opaque.",
 +            field: Box::new(SettingField {
 +                organization_override: None,
 +                json_path: Some("background.editor_opacity"),
@@ -723,7 +1068,7 @@ index eefb373eb8..7eeb6cd2e3 100644
 +        }),
 +        SettingsPageItem::SettingItem(SettingItem {
 +            title: "Overlay Opacity",
-+            description: "Overlay opacity from 0 to 1.",
++            description: "Darken the image, from 0 to 100%.",
 +            field: Box::new(SettingField {
 +                organization_override: None,
 +                json_path: Some("background.overlay_opacity"),
@@ -736,6 +1081,7 @@ index eefb373eb8..7eeb6cd2e3 100644
 +            metadata: None,
 +            files: USER,
 +        }),
++        SettingsPageItem::SectionHeader("Image Layout"),
 +        SettingsPageItem::SettingItem(SettingItem {
 +            title: "Background Size",
 +            description: "How to fit the image within the editor.",
@@ -765,6 +1111,95 @@ index eefb373eb8..7eeb6cd2e3 100644
 +            files: USER,
 +        }),
 +    ];
++    if let Some(index) = items.iter().position(|item| matches!(item, SettingsPageItem::SettingItem(item) if item.title == "Enable Background")) {
++        let enabled = items.remove(index);
++        items.insert(1, enabled);
++    }
++    if let Some(index) = items.iter().position(|item| matches!(item, SettingsPageItem::ActionLink(item) if item.title.as_ref() == "Reset to Default")) {
++        let reset = items.remove(index);
++        items.push(reset);
++    }
++    if settings::SettingsStore::global(cx)
++        .merged_settings()
++        .background
++        .as_ref()
++        .is_some_and(|background| background.scope == Some(settings::BackgroundScope::Custom))
++    {
++        let custom = vec![
++            SettingsPageItem::SectionHeader("Custom Areas"),
++            SettingsPageItem::SettingItem(SettingItem {
++                title: "Editor",
++                description: "Code and text editing area.",
++                field: Box::new(SettingField {
++                    organization_override: None,
++                    json_path: Some("background.editor"),
++                    pick: |content| content.background.as_ref()?.editor.as_ref(),
++                    write: |content, value, _| {
++                        content.background.get_or_insert_default().editor = value;
++                    },
++                }),
++                metadata: None,
++                files: USER,
++            }),
++            SettingsPageItem::SettingItem(SettingItem {
++                title: "Side Panels",
++                description: "Files, Git, outline, and other utility panels.",
++                field: Box::new(SettingField {
++                    organization_override: None,
++                    json_path: Some("background.panels"),
++                    pick: |content| content.background.as_ref()?.panels.as_ref(),
++                    write: |content, value, _| {
++                        content.background.get_or_insert_default().panels = value;
++                    },
++                }),
++                metadata: None,
++                files: USER,
++            }),
++            SettingsPageItem::SettingItem(SettingItem {
++                title: "AI Assistant",
++                description: "AI conversations and agent panel.",
++                field: Box::new(SettingField {
++                    organization_override: None,
++                    json_path: Some("background.assistant"),
++                    pick: |content| content.background.as_ref()?.assistant.as_ref(),
++                    write: |content, value, _| {
++                        content.background.get_or_insert_default().assistant = value;
++                    },
++                }),
++                metadata: None,
++                files: USER,
++            }),
++            SettingsPageItem::SettingItem(SettingItem {
++                title: "Terminal",
++                description: "Terminal panel and terminal tabs.",
++                field: Box::new(SettingField {
++                    organization_override: None,
++                    json_path: Some("background.terminal"),
++                    pick: |content| content.background.as_ref()?.terminal.as_ref(),
++                    write: |content, value, _| {
++                        content.background.get_or_insert_default().terminal = value;
++                    },
++                }),
++                metadata: None,
++                files: USER,
++            }),
++            SettingsPageItem::SettingItem(SettingItem {
++                title: "Window Bars",
++                description: "Title bar, editor tab bar, toolbar, and status bar.",
++                field: Box::new(SettingField {
++                    organization_override: None,
++                    json_path: Some("background.chrome"),
++                    pick: |content| content.background.as_ref()?.chrome.as_ref(),
++                    write: |content, value, _| {
++                        content.background.get_or_insert_default().chrome = value;
++                    },
++                }),
++                metadata: None,
++                files: USER,
++            }),
++        ];
++        items.splice(3..3, custom);
++    }
 +    SettingsPage {
 +        title: "Background",
 +        items: items.into_boxed_slice(),
@@ -784,8 +1219,78 @@ index 6038a5eaa1..a3c5341829 100644
  mod audio_input_output_setup;
  mod audio_test_window;
  mod edit_prediction_provider_setup;
+diff --git a/crates/settings_ui/src/pages/background_preview.rs b/crates/settings_ui/src/pages/background_preview.rs
+new file mode 100644
+index 0000000000..23f001caa2
+--- /dev/null
++++ b/crates/settings_ui/src/pages/background_preview.rs
+@@ -0,0 +1,64 @@
++use editor::Editor;
++use gpui::ReadGlobal as _;
++use gpui::{ScrollHandle, prelude::*};
++use language::Buffer;
++use settings::SettingsStore;
++use ui::prelude::*;
++
++use crate::SettingsWindow;
++
++pub(crate) fn render_background_preview(
++    _: &SettingsWindow,
++    _: &ScrollHandle,
++    window: &mut Window,
++    cx: &mut Context<SettingsWindow>,
++) -> AnyElement {
++    let editor = window.use_keyed_state("background-preview-editor", cx, |window, cx| {
++        let buffer = cx.new(|cx| {
++            Buffer::local(
++                "// Background preview\n\nfn main() {\n    println!(\"Hello, Zed!\");\n}\n",
++                cx,
++            )
++        });
++        Editor::for_buffer(buffer, None, window, cx)
++    });
++    let path = SettingsStore::global(cx)
++        .merged_settings()
++        .background
++        .as_ref()
++        .and_then(|background| background.image_path.as_deref());
++    let name = path
++        .and_then(|path| std::path::Path::new(path).file_name())
++        .map(|name| name.to_string_lossy().into_owned())
++        .unwrap_or_else(|| "No image selected".into());
++    v_flex()
++        .size_full()
++        .p_8()
++        .gap_4()
++        .child(
++            h_flex()
++                .gap_3()
++                .when_some(path, |row, path| {
++                    row.child(
++                        gpui::img(std::path::PathBuf::from(path))
++                            .w(gpui::px(96.0))
++                            .h(gpui::px(64.0))
++                            .object_fit(gpui::ObjectFit::Contain),
++                    )
++                })
++                .child(Label::new(name)),
++        )
++        .child(
++            div()
++                .relative()
++                .w_full()
++                .h(gpui::px(360.0))
++                .overflow_hidden()
++                .children(settings::background::render_window(
++                    cx.theme().colors().editor_background,
++                    cx,
++                ))
++                .child(editor),
++        )
++        .into_any_element()
++}
 diff --git a/crates/settings_ui/src/settings_ui.rs b/crates/settings_ui/src/settings_ui.rs
-index 96371f98a1..7c370bd81a 100644
+index 96371f98a1..4ffb1d768d 100644
 --- a/crates/settings_ui/src/settings_ui.rs
 +++ b/crates/settings_ui/src/settings_ui.rs
 @@ -27,7 +27,7 @@ use settings::{
@@ -835,16 +1340,17 @@ index 96371f98a1..7c370bd81a 100644
              .register_action(|_, _: &OpenSettings, window, cx| {
                  let window_handle = window.window_handle().downcast::<MultiWorkspace>();
                  open_settings_editor(None, None, window_handle, cx);
-@@ -557,6 +574,8 @@ fn init_renderers(cx: &mut App) {
+@@ -557,6 +574,9 @@ fn init_renderers(cx: &mut App) {
          .add_basic_renderer::<settings::RestoreOnStartupBehavior>(render_dropdown)
          .add_basic_renderer::<settings::OnNewWindow>(render_dropdown)
          .add_basic_renderer::<settings::BottomDockLayout>(render_dropdown)
++        .add_basic_renderer::<settings::BackgroundScope>(render_dropdown)
 +        .add_basic_renderer::<settings::BackgroundSize>(render_dropdown)
 +        .add_basic_renderer::<settings::BackgroundPosition>(render_dropdown)
          .add_basic_renderer::<settings::OnLastWindowClosed>(render_dropdown)
          .add_basic_renderer::<settings::CliDefaultOpenBehavior>(render_dropdown)
          .add_basic_renderer::<settings::DefaultOpenBehavior>(render_dropdown)
-@@ -613,7 +632,7 @@ fn init_renderers(cx: &mut App) {
+@@ -613,7 +633,7 @@ fn init_renderers(cx: &mut App) {
          .add_basic_renderer::<settings::CursorShapeContent>(render_dropdown)
          .add_basic_renderer::<settings::EditPredictionPromptFormatContent>(render_dropdown)
          .add_basic_renderer::<settings::EditPredictionDataCollectionChoice>(render_dropdown)
@@ -853,7 +1359,30 @@ index 96371f98a1..7c370bd81a 100644
          .add_basic_renderer::<settings::AutoCompactThreshold>(render_text_field)
          .add_basic_renderer::<u32>(render_editable_number_field)
          .add_basic_renderer::<u64>(render_editable_number_field)
-@@ -5130,6 +5149,114 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
+@@ -1815,8 +1835,22 @@ impl SettingsWindow {
+         .detach();
+ 
+         let mut ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
++        let mut background_scope = SettingsStore::global(cx)
++            .merged_settings()
++            .background
++            .as_ref()
++            .and_then(|background| background.scope);
+         cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
+             this.fetch_files(window, cx);
++            let new_scope = SettingsStore::global(cx)
++                .merged_settings()
++                .background
++                .as_ref()
++                .and_then(|background| background.scope);
++            if new_scope != background_scope {
++                background_scope = new_scope;
++                this.rebuild_pages(window, cx);
++            }
+ 
+             // Whenever settings are changed, it's possible that the changed
+             // settings affects the rendering of the `SettingsWindow`, like is
+@@ -5130,6 +5164,128 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
          .into_any_element()
  }
  
@@ -879,15 +1408,33 @@ index 96371f98a1..7c370bd81a 100644
 +    };
 +    let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
 +    let value = value.copied().unwrap_or(0.0).clamp(0.0, maximum);
-+    let numeric = render_editable_number_field(
-+        field,
-+        file.clone(),
-+        metadata,
-+        title,
-+        description,
++    let scale = if maximum == 1.0 { 100.0 } else { 1.0 };
++    let numeric = NumberField::new(
++        format!("background-value-{title}"),
++        value * scale,
 +        window,
 +        cx,
-+    );
++    )
++    .mode(NumberFieldMode::Edit, cx)
++    .tab_index(0_isize)
++    .aria_label(title)
++    .on_change({
++        let file = file.clone();
++        move |value, window, cx| {
++            let value = (*value / scale).clamp(0.0, maximum);
++            update_settings_file(
++                file.clone(),
++                field.json_path,
++                window,
++                cx,
++                move |content, cx| {
++                    (field.write)(content, Some(value), cx);
++                },
++            )
++            .log_err();
++        }
++    })
++    .into_any_element();
 +    let bounds = Rc::new(Cell::new(gpui::Bounds::<Pixels>::default()));
 +    let previous = Rc::new(Cell::new(value));
 +    let change = Rc::new({
@@ -957,221 +1504,292 @@ index 96371f98a1..7c370bd81a 100644
 +                }),
 +        )
 +        .child(numeric)
-+        .child(Label::new(if maximum == 1.0 {
-+            format!("{:.0}%", value * 100.0)
-+        } else {
-+            format!("{value:.2} px")
-+        }))
++        .child(Label::new(if maximum == 1.0 { "%" } else { "px" }))
 +        .into_any_element()
 +}
 +
  fn render_editable_number_field<T: NumberFieldType + Send + Sync>(
      field: SettingField<T>,
      file: SettingsUiFile,
+diff --git a/crates/sidebar/src/sidebar.rs b/crates/sidebar/src/sidebar.rs
+index 03683bfb6e..ca25a7368a 100644
+--- a/crates/sidebar/src/sidebar.rs
++++ b/crates/sidebar/src/sidebar.rs
+@@ -8076,7 +8076,7 @@ impl Render for Sidebar {
+                         }),
+                 }
+             })
+-            .bg(bg)
++            .bg(settings::background::surface_color(bg, cx))
+             .when(self.side(cx) == SidebarSide::Left, |el| el.border_r_1())
+             .when(self.side(cx) == SidebarSide::Right, |el| el.border_l_1())
+             .border_color(color.border)
+diff --git a/crates/terminal_view/src/terminal_element.rs b/crates/terminal_view/src/terminal_element.rs
+index 6db4b3b079..be39f45030 100644
+--- a/crates/terminal_view/src/terminal_element.rs
++++ b/crates/terminal_view/src/terminal_element.rs
+@@ -1328,7 +1328,12 @@ impl Element for TerminalElement {
+ 
+                 let search_matches = self.terminal.read(cx).matches.clone();
+ 
+-                let background_color = theme.colors().terminal_background;
++                let background_color =
++                    if settings::background::includes(settings::background::Region::Terminal, cx) {
++                        gpui::transparent_black()
++                    } else {
++                        theme.colors().terminal_background
++                    };
+ 
+                 let (hover_tooltip, hover_match) = self.terminal.update(cx, |terminal, cx| {
+                     terminal.set_size(dimensions);
+diff --git a/crates/terminal_view/src/terminal_panel.rs b/crates/terminal_view/src/terminal_panel.rs
+index 9d0eb3792b..6e48d418d7 100644
+--- a/crates/terminal_view/src/terminal_panel.rs
++++ b/crates/terminal_view/src/terminal_panel.rs
+@@ -1432,7 +1432,11 @@ impl Render for FailedToSpawnTerminal {
+             .p_4()
+             .items_center()
+             .justify_center()
+-            .bg(cx.theme().colors().editor_background)
++            .bg(settings::background::region_color(
++                cx.theme().colors().editor_background,
++                settings::background::Region::Terminal,
++                cx,
++            ))
+             .child(
+                 v_flex()
+                     .max_w_112()
+diff --git a/crates/terminal_view/src/terminal_view.rs b/crates/terminal_view/src/terminal_view.rs
+index 0eb62438a5..54e5663cd1 100644
+--- a/crates/terminal_view/src/terminal_view.rs
++++ b/crates/terminal_view/src/terminal_view.rs
+@@ -1523,7 +1523,16 @@ impl Render for TerminalView {
+                 div()
+                     .id("terminal-view-container")
+                     .size_full()
+-                    .bg(cx.theme().colors().editor_background)
++                    .bg(
++                        if settings::background::includes(
++                            settings::background::Region::Terminal,
++                            cx,
++                        ) {
++                            gpui::transparent_black()
++                        } else {
++                            cx.theme().colors().editor_background
++                        },
++                    )
+                     .when_some(self.background_corner_radii, |this, radii| {
+                         this.rounded_tl(radii.top_left)
+                             .rounded_tr(radii.top_right)
+@@ -1534,7 +1543,16 @@ impl Render for TerminalView {
+                         div()
+                             .size_full()
+                             .pt(self.content_top_padding)
+-                            .bg(cx.theme().colors().terminal_background)
++                            .bg(
++                                if settings::background::includes(
++                                    settings::background::Region::Terminal,
++                                    cx,
++                                ) {
++                                    gpui::transparent_black()
++                                } else {
++                                    cx.theme().colors().terminal_background
++                                },
++                            )
+                             .rounded_tl(content_corner_radii.top_left)
+                             .rounded_tr(content_corner_radii.top_right)
+                             .rounded_bl(content_corner_radii.bottom_left)
+diff --git a/crates/ui/Cargo.toml b/crates/ui/Cargo.toml
+index e1a9812cec..e986c910fb 100644
+--- a/crates/ui/Cargo.toml
++++ b/crates/ui/Cargo.toml
+@@ -22,6 +22,7 @@ icons.workspace = true
+ itertools.workspace = true
+ log.workspace = true
+ menu.workspace = true
++settings.workspace = true
+ schemars.workspace = true
+ serde.workspace = true
+ smallvec.workspace = true
+diff --git a/crates/ui/src/components/tab_bar.rs b/crates/ui/src/components/tab_bar.rs
+index 524f880398..8f7791efac 100644
+--- a/crates/ui/src/components/tab_bar.rs
++++ b/crates/ui/src/components/tab_bar.rs
+@@ -98,7 +98,11 @@ impl RenderOnce for TabBar {
+             .flex_none()
+             .w_full()
+             .h(Tab::container_height(cx))
+-            .bg(cx.theme().colors().tab_bar_background)
++            .bg(settings::background::region_color(
++                cx.theme().colors().tab_bar_background,
++                settings::background::Region::Chrome,
++                cx,
++            ))
+             .when(!self.start_children.is_empty(), |this| {
+                 this.child(
+                     h_flex()
 diff --git a/crates/workspace/src/dock.rs b/crates/workspace/src/dock.rs
-index 60ba69dacc..98a278ee36 100644
+index 60ba69dacc..b8362cf908 100644
 --- a/crates/workspace/src/dock.rs
 +++ b/crates/workspace/src/dock.rs
-@@ -1341,11 +1341,19 @@ impl Render for Dock {
+@@ -1339,13 +1339,23 @@ impl Render for Dock {
+                 }
+             };
  
++            let background_region = match self.active_panel().map(|panel| panel.persistent_name()) {
++                Some("AgentPanel") => settings::background::Region::Assistant,
++                Some("TerminalPanel") => settings::background::Region::Terminal,
++                _ => settings::background::Region::Panels,
++            };
              div()
                  .id("dock-panel")
 +                .relative()
-+                .children(settings::background::render_surface(
-+                    cx.theme().colors().panel_background,
-+                    cx,
-+                ))
                  .key_context(dispatch_context)
                  .track_focus(&self.focus_handle(cx))
                  .focus_follows_mouse(self.focus_follows_mouse, cx)
                  .flex()
 -                .bg(cx.theme().colors().panel_background)
-+                .bg(settings::background::surface_color(
++                .bg(settings::background::region_color(
 +                    cx.theme().colors().panel_background,
++                    background_region,
 +                    cx,
 +                ))
                  .border_color(cx.theme().colors().border)
                  .overflow_hidden()
                  .map(|this| match self.position().axis() {
-@@ -1378,6 +1386,11 @@ impl Render for Dock {
+@@ -1378,6 +1388,7 @@ impl Render for Dock {
          } else {
              div()
                  .id("dock-panel")
 +                .relative()
-+                .children(settings::background::render_surface(
-+                    cx.theme().colors().panel_background,
-+                    cx,
-+                ))
                  .key_context(dispatch_context)
                  .track_focus(&self.focus_handle(cx))
          }
+diff --git a/crates/workspace/src/multi_workspace.rs b/crates/workspace/src/multi_workspace.rs
+index 0f47414f4b..2d1eddcab7 100644
+--- a/crates/workspace/src/multi_workspace.rs
++++ b/crates/workspace/src/multi_workspace.rs
+@@ -2092,6 +2092,10 @@ impl Render for MultiWorkspace {
+ 
+         client_side_decorations(
+             root.key_context(workspace_key_context)
++                .children(settings::background::render_window(
++                    cx.theme().colors().background,
++                    cx,
++                ))
+                 .relative()
+                 .size_full()
+                 .font(ui_font)
+diff --git a/crates/workspace/src/pane.rs b/crates/workspace/src/pane.rs
+index 509a8e8fd3..f012746107 100644
+--- a/crates/workspace/src/pane.rs
++++ b/crates/workspace/src/pane.rs
+@@ -2844,7 +2844,11 @@ impl Pane {
+         let knockout_item_color = if is_active {
+             cx.theme().colors().tab_active_background
+         } else {
+-            cx.theme().colors().tab_bar_background
++            if settings::background::includes(settings::background::Region::Chrome, cx) {
++                gpui::transparent_black()
++            } else {
++                cx.theme().colors().tab_bar_background
++            }
+         };
+ 
+         let (icon_decoration, icon_color) = if matches!(diagnostic, &DiagnosticSeverity::ERROR) {
+@@ -4464,6 +4468,13 @@ impl Render for Pane {
+         };
+ 
+         v_flex()
++            .when(self.active_item().is_none(), |pane| {
++                pane.bg(settings::background::region_color(
++                    cx.theme().colors().editor_background,
++                    settings::background::Region::Editor,
++                    cx,
++                ))
++            })
+             .key_context(key_context)
+             .track_focus(&self.focus_handle(cx))
+             .size_full()
+diff --git a/crates/workspace/src/status_bar.rs b/crates/workspace/src/status_bar.rs
+index 0cf9e97b13..3205f9d847 100644
+--- a/crates/workspace/src/status_bar.rs
++++ b/crates/workspace/src/status_bar.rs
+@@ -151,7 +151,13 @@ impl Render for StatusBar {
+             .justify_between()
+             .gap(DynamicSpacing::Base08.rems(cx))
+             .p(DynamicSpacing::Base04.rems(cx))
+-            .bg(cx.theme().colors().status_bar_background)
++            .bg(
++                if settings::background::includes(settings::background::Region::Chrome, cx) {
++                    gpui::transparent_black()
++                } else {
++                    cx.theme().colors().status_bar_background
++                },
++            )
+             .map(|el| match window.window_decorations() {
+                 Decorations::Server => el,
+                 Decorations::Client { tiling, .. } => el
+diff --git a/crates/workspace/src/toolbar.rs b/crates/workspace/src/toolbar.rs
+index b14775f289..ffd522ddc0 100644
+--- a/crates/workspace/src/toolbar.rs
++++ b/crates/workspace/src/toolbar.rs
+@@ -127,7 +127,11 @@ impl Render for Toolbar {
+             })
+             .border_b_1()
+             .border_color(cx.theme().colors().border_variant)
+-            .bg(cx.theme().colors().toolbar_background)
++            .bg(settings::background::region_color(
++                cx.theme().colors().toolbar_background,
++                settings::background::Region::Chrome,
++                cx,
++            ))
+             .when(has_left_items || has_right_items, |this| {
+                 this.child(
+                     h_flex()
 diff --git a/crates/workspace/src/workspace.rs b/crates/workspace/src/workspace.rs
-index b4a687c884..36da72f91d 100644
+index b4a687c884..56ba196dc2 100644
 --- a/crates/workspace/src/workspace.rs
 +++ b/crates/workspace/src/workspace.rs
-@@ -9900,7 +9900,8 @@ impl Render for Workspace {
+@@ -9797,7 +9797,14 @@ impl Render for Workspace {
+                 div()
+                     .h_full()
+                     .w(relative(size))
+-                    .bg(cx.theme().colors().editor_background)
++                    .bg(
++                        if settings::background::includes(settings::background::Region::Editor, cx)
++                        {
++                            gpui::transparent_black()
++                        } else {
++                            cx.theme().colors().editor_background
++                        },
++                    )
+                     .border_color(cx.theme().colors().pane_group_border)
+             })
+         };
+@@ -9900,7 +9907,11 @@ impl Render for Workspace {
                      .child(
                          div()
                              .id("workspace")
 -                            .bg(colors.background)
-+                            .children(settings::background::render_surface(colors.background, cx))
-+                            .bg(settings::background::surface_color(colors.background, cx))
++                            .bg(if settings::background::is_enabled(cx) {
++                                gpui::transparent_black()
++                            } else {
++                                colors.background
++                            })
                              .relative()
                              .flex_1()
                              .w_full()
-@@ -10263,7 +10264,7 @@ impl Render for Workspace {
+@@ -10263,7 +10274,11 @@ impl Render for Workspace {
                                      .absolute()
                                      .overflow_hidden()
                                      .border_color(colors.border)
 -                                    .bg(colors.background)
-+                                    .bg(settings::background::surface_color(colors.background, cx))
++                                    .bg(if settings::background::is_enabled(cx) {
++                                        gpui::transparent_black()
++                                    } else {
++                                        colors.background
++                                    })
                                      .child(zoomed_element)
                                      .inset_0()
                                      .shadow_lg();
-diff --git a/crates/settings/src/background.rs b/crates/settings/src/background.rs
-new file mode 100644
-index 0000000000..997d092771
---- /dev/null
-+++ b/crates/settings/src/background.rs
-@@ -0,0 +1,75 @@
-+use crate::{BackgroundPosition, BackgroundSize, SettingsStore};
-+use gpui::{AnyElement, App, Hsla, ReadGlobal as _, prelude::*};
-+
-+pub fn is_enabled(cx: &App) -> bool {
-+    SettingsStore::global(cx)
-+        .merged_settings()
-+        .background
-+        .as_ref()
-+        .is_some_and(|settings| settings.enabled == Some(true) && settings.image_path.is_some())
-+}
-+
-+pub fn surface_color(color: Hsla, cx: &App) -> Hsla {
-+    if is_enabled(cx) {
-+        color.opacity(0.0)
-+    } else {
-+        color
-+    }
-+}
-+
-+pub fn render_surface(color: Hsla, cx: &App) -> Option<AnyElement> {
-+    let settings = SettingsStore::global(cx)
-+        .merged_settings()
-+        .background
-+        .as_ref()?;
-+    if settings.enabled != Some(true) {
-+        return None;
-+    }
-+    let path = std::path::PathBuf::from(settings.image_path.as_ref()?);
-+    let fit = match settings.size.unwrap_or_default() {
-+        BackgroundSize::Cover => gpui::ObjectFit::Cover,
-+        BackgroundSize::Contain => gpui::ObjectFit::Contain,
-+        BackgroundSize::Stretch => gpui::ObjectFit::Fill,
-+    };
-+    let (horizontal, vertical) = match settings.position.unwrap_or_default() {
-+        BackgroundPosition::Center => (0.5, 0.5),
-+        BackgroundPosition::Top => (0.5, 0.0),
-+        BackgroundPosition::Bottom => (0.5, 1.0),
-+        BackgroundPosition::Left => (0.0, 0.5),
-+        BackgroundPosition::Right => (1.0, 0.5),
-+    };
-+    Some(
-+        gpui::div()
-+            .absolute()
-+            .inset_0()
-+            .size_full()
-+            .overflow_hidden()
-+            .bg(color)
-+            .child(
-+                gpui::img(path)
-+                    .absolute()
-+                    .inset_0()
-+                    .size_full()
-+                    .object_fit(fit)
-+                    .image_position(horizontal, vertical)
-+                    .image_blur(settings.blur.unwrap_or(0.0))
-+                    .opacity(settings.image_opacity.unwrap_or(1.0).clamp(0.0, 1.0)),
-+            )
-+            .child(
-+                gpui::div()
-+                    .absolute()
-+                    .inset_0()
-+                    .size_full()
-+                    .bg(gpui::black()
-+                        .opacity(settings.overlay_opacity.unwrap_or(0.0).clamp(0.0, 1.0))),
-+            )
-+            .child(
-+                gpui::div()
-+                    .absolute()
-+                    .inset_0()
-+                    .size_full()
-+                    .bg(color.opacity(settings.editor_opacity.unwrap_or(0.8).clamp(0.0, 1.0))),
-+            )
-+            .into_any_element(),
-+    )
-+}
-diff --git a/crates/settings_ui/src/pages/background_preview.rs b/crates/settings_ui/src/pages/background_preview.rs
-new file mode 100644
-index 0000000000..71148d4427
---- /dev/null
-+++ b/crates/settings_ui/src/pages/background_preview.rs
-@@ -0,0 +1,60 @@
-+use editor::Editor;
-+use gpui::ReadGlobal as _;
-+use gpui::{ScrollHandle, prelude::*};
-+use language::Buffer;
-+use settings::SettingsStore;
-+use ui::prelude::*;
-+
-+use crate::SettingsWindow;
-+
-+pub(crate) fn render_background_preview(
-+    _: &SettingsWindow,
-+    _: &ScrollHandle,
-+    window: &mut Window,
-+    cx: &mut Context<SettingsWindow>,
-+) -> AnyElement {
-+    let editor = window.use_keyed_state("background-preview-editor", cx, |window, cx| {
-+        let buffer = cx.new(|cx| {
-+            Buffer::local(
-+                "// Background preview\n\nfn main() {\n    println!(\"Hello, Zed!\");\n}\n",
-+                cx,
-+            )
-+        });
-+        Editor::for_buffer(buffer, None, window, cx)
-+    });
-+    let path = SettingsStore::global(cx)
-+        .merged_settings()
-+        .background
-+        .as_ref()
-+        .and_then(|background| background.image_path.as_deref());
-+    let name = path
-+        .and_then(|path| std::path::Path::new(path).file_name())
-+        .map(|name| name.to_string_lossy().into_owned())
-+        .unwrap_or_else(|| "No image selected".into());
-+    v_flex()
-+        .size_full()
-+        .p_8()
-+        .gap_4()
-+        .child(
-+            h_flex()
-+                .gap_3()
-+                .when_some(path, |row, path| {
-+                    row.child(
-+                        gpui::img(std::path::PathBuf::from(path))
-+                            .w(gpui::px(96.0))
-+                            .h(gpui::px(64.0))
-+                            .object_fit(gpui::ObjectFit::Contain),
-+                    )
-+                })
-+                .child(Label::new(name)),
-+        )
-+        .child(
-+            div()
-+                .relative()
-+                .w_full()
-+                .h(gpui::px(360.0))
-+                .overflow_hidden()
-+                .child(editor),
-+        )
-+        .into_any_element()
-+}

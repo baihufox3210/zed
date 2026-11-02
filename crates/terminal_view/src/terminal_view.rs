@@ -1531,7 +1531,16 @@ impl Render for TerminalView {
                 div()
                     .id("terminal-view-container")
                     .size_full()
-                    .bg(cx.theme().colors().editor_background)
+                    .bg(
+                        if settings::background::includes(
+                            settings::background::Region::Terminal,
+                            cx,
+                        ) {
+                            gpui::transparent_black()
+                        } else {
+                            cx.theme().colors().editor_background
+                        },
+                    )
                     .when_some(self.background_corner_radii, |this, radii| {
                         this.rounded_tl(radii.top_left)
                             .rounded_tr(radii.top_right)
@@ -1542,7 +1551,16 @@ impl Render for TerminalView {
                         div()
                             .size_full()
                             .pt(self.content_top_padding)
-                            .bg(cx.theme().colors().terminal_background)
+                            .bg(
+                                if settings::background::includes(
+                                    settings::background::Region::Terminal,
+                                    cx,
+                                ) {
+                                    gpui::transparent_black()
+                                } else {
+                                    cx.theme().colors().terminal_background
+                                },
+                            )
                             .rounded_tl(content_corner_radii.top_left)
                             .rounded_tr(content_corner_radii.top_right)
                             .rounded_bl(content_corner_radii.bottom_left)

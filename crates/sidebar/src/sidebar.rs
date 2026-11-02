@@ -8039,7 +8039,7 @@ impl Render for Sidebar {
                         }),
                 }
             })
-            .bg(bg)
+            .bg(settings::background::surface_color(bg, cx))
             .when(self.side(cx) == SidebarSide::Left, |el| el.border_r_1())
             .when(self.side(cx) == SidebarSide::Right, |el| el.border_l_1())
             .border_color(color.border)
