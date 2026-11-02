@@ -466,7 +466,7 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                     return;
                 };
                 editor.update(cx, |editor, cx| {
-                    editor.set_text(format!("{}", new_value), window, cx);
+                    editor.set_text(T::default_format(&new_value), window, cx);
                 });
             })
         };
@@ -635,7 +635,7 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                     )
                                     .into_any_element(),
                                 NumberFieldMode::Edit => {
-                                    let expected_text = format!("{}", self.value);
+                                    let expected_text = T::default_format(&self.value);
 
                                     let editor = window.use_state(cx, {
                                         let expected_text = expected_text.clone();
@@ -678,7 +678,7 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                                                     ValueChangeDirection::Increment,
                                                                 );
                                                                 editor.set_text(
-                                                                    format!("{}", new_value),
+                                                                    T::default_format(&new_value),
                                                                     window,
                                                                     cx,
                                                                 );
@@ -710,7 +710,7 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                                                     ValueChangeDirection::Decrement,
                                                                 );
                                                                 editor.set_text(
-                                                                    format!("{}", new_value),
+                                                                    T::default_format(&new_value),
                                                                     window,
                                                                     cx,
                                                                 );

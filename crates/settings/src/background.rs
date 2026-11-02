@@ -92,6 +92,21 @@ pub fn chrome_surface_color(color: Hsla, region: Region, cx: &App) -> Hsla {
     }
 }
 
+pub fn message_color(color: Hsla, cx: &App) -> Hsla {
+    if includes(Region::Assistant, cx) {
+        let opacity = SettingsStore::global(cx)
+            .merged_settings()
+            .background
+            .as_ref()
+            .and_then(|settings| settings.message_opacity)
+            .unwrap_or(0.8)
+            .clamp(0.0, 1.0);
+        color.opacity(opacity)
+    } else {
+        color
+    }
+}
+
 fn render_image(color: Hsla, cx: &App) -> Option<AnyElement> {
     let settings = SettingsStore::global(cx)
         .merged_settings()

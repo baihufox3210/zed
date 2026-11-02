@@ -133,8 +133,16 @@ impl LineNumberStyle {
             Self::Breakpoint => colors.debugger_accent,
             Self::DiffAdded => colors.version_control_added,
             Self::DiffDeleted => colors.version_control_deleted,
-            Self::Active => colors.editor_active_line_number,
-            Self::Inactive => colors.editor_line_number,
+            Self::Active => {
+                let mut color = colors.editor_active_line_number;
+                color.l *= 0.8;
+                color
+            }
+            Self::Inactive => {
+                let mut color = colors.editor_line_number;
+                color.l *= 0.8;
+                color
+            }
         }
     }
 }
