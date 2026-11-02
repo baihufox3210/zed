@@ -2092,6 +2092,10 @@ impl Render for MultiWorkspace {
 
         client_side_decorations(
             root.key_context(workspace_key_context)
+                .children(settings::background::render_window(
+                    cx.theme().colors().background,
+                    cx,
+                ))
                 .relative()
                 .size_full()
                 .font(ui_font)

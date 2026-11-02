@@ -1,3 +1,4 @@
+use gpui::ReadGlobal as _;
 use gpui::{Action as _, App, AppContext as _, PathPromptOptions};
 use itertools::Itertools as _;
 use settings::{
@@ -67,7 +68,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
     vec![
         general_page(cx),
         appearance_page(),
-        background_page(),
+        background_page(cx),
         keymap_page(),
         editor_page(),
         languages_and_tools_page(cx),
@@ -122,9 +123,24 @@ fn save_background_change(
     .detach();
 }
 
-fn background_page() -> SettingsPage {
-    let items = vec![
-        SettingsPageItem::SectionHeader("Background"),
+fn background_page(cx: &App) -> SettingsPage {
+    let mut items = vec![
+        SettingsPageItem::SectionHeader("Background Range"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Apply Background To",
+            description: "Window: one continuous image across Zed. Editor: editing area only. Custom: choose areas below.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                json_path: Some("background.scope"),
+                pick: |content| content.background.as_ref()?.scope.as_ref(),
+                write: |content, value, _| {
+                    content.background.get_or_insert_default().scope = value;
+                },
+            }),
+            metadata: None,
+            files: USER,
+        }),
+        SettingsPageItem::SectionHeader("Image"),
         SettingsPageItem::SubPageLink(SubPageLink {
             title: "Background Preview".into(),
             r#type: Default::default(),
@@ -275,23 +291,10 @@ fn background_page() -> SettingsPage {
             metadata: None,
             files: USER,
         }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Image Path",
-            description: "Path to a PNG, JPEG, or WebP image.",
-            field: Box::new(SettingField {
-                organization_override: None,
-                json_path: Some("background.image_path"),
-                pick: |content| content.background.as_ref()?.image_path.as_ref(),
-                write: |content, value, _| {
-                    content.background.get_or_insert_default().image_path = value;
-                },
-            }),
-            metadata: None,
-            files: USER,
-        }),
+        SettingsPageItem::SectionHeader("Appearance"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Image Opacity",
-            description: "Image opacity from 0 to 1.",
+            description: "Visibility of the image, from 0 to 100%.",
             field: Box::new(SettingField {
                 organization_override: None,
                 json_path: Some("background.image_opacity"),
@@ -305,8 +308,8 @@ fn background_page() -> SettingsPage {
             files: USER,
         }),
         SettingsPageItem::SettingItem(SettingItem {
-            title: "Editor Opacity",
-            description: "Editor background opacity from 0 to 1.",
+            title: "Surface Tint",
+            description: "Higher values make the image less visible behind selected areas. Text stays opaque.",
             field: Box::new(SettingField {
                 organization_override: None,
                 json_path: Some("background.editor_opacity"),
@@ -336,7 +339,7 @@ fn background_page() -> SettingsPage {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Overlay Opacity",
-            description: "Overlay opacity from 0 to 1.",
+            description: "Darken the image, from 0 to 100%.",
             field: Box::new(SettingField {
                 organization_override: None,
                 json_path: Some("background.overlay_opacity"),
@@ -349,6 +352,7 @@ fn background_page() -> SettingsPage {
             metadata: None,
             files: USER,
         }),
+        SettingsPageItem::SectionHeader("Image Layout"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Background Size",
             description: "How to fit the image within the editor.",
@@ -378,6 +382,95 @@ fn background_page() -> SettingsPage {
             files: USER,
         }),
     ];
+    if let Some(index) = items.iter().position(|item| matches!(item, SettingsPageItem::SettingItem(item) if item.title == "Enable Background")) {
+        let enabled = items.remove(index);
+        items.insert(1, enabled);
+    }
+    if let Some(index) = items.iter().position(|item| matches!(item, SettingsPageItem::ActionLink(item) if item.title.as_ref() == "Reset to Default")) {
+        let reset = items.remove(index);
+        items.push(reset);
+    }
+    if settings::SettingsStore::global(cx)
+        .merged_settings()
+        .background
+        .as_ref()
+        .is_some_and(|background| background.scope == Some(settings::BackgroundScope::Custom))
+    {
+        let custom = vec![
+            SettingsPageItem::SectionHeader("Custom Areas"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Editor",
+                description: "Code and text editing area.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("background.editor"),
+                    pick: |content| content.background.as_ref()?.editor.as_ref(),
+                    write: |content, value, _| {
+                        content.background.get_or_insert_default().editor = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Side Panels",
+                description: "Files, Git, outline, and other utility panels.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("background.panels"),
+                    pick: |content| content.background.as_ref()?.panels.as_ref(),
+                    write: |content, value, _| {
+                        content.background.get_or_insert_default().panels = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "AI Assistant",
+                description: "AI conversations and agent panel.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("background.assistant"),
+                    pick: |content| content.background.as_ref()?.assistant.as_ref(),
+                    write: |content, value, _| {
+                        content.background.get_or_insert_default().assistant = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Terminal",
+                description: "Terminal panel and terminal tabs.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("background.terminal"),
+                    pick: |content| content.background.as_ref()?.terminal.as_ref(),
+                    write: |content, value, _| {
+                        content.background.get_or_insert_default().terminal = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Window Bars",
+                description: "Title bar, editor tab bar, toolbar, and status bar.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("background.chrome"),
+                    pick: |content| content.background.as_ref()?.chrome.as_ref(),
+                    write: |content, value, _| {
+                        content.background.get_or_insert_default().chrome = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ];
+        items.splice(3..3, custom);
+    }
     SettingsPage {
         title: "Background",
         items: items.into_boxed_slice(),

@@ -5587,7 +5587,11 @@ impl AgentPanel {
                             .absolute()
                             .right_0()
                             .h_full()
-                            .bg(cx.theme().colors().tab_bar_background)
+                            .bg(settings::background::region_color(
+                                cx.theme().colors().tab_bar_background,
+                                settings::background::Region::Assistant,
+                                cx,
+                            ))
                             .child(
                                 IconButton::new("edit_tile", IconName::Pencil)
                                     .icon_size(IconSize::Small)
@@ -6248,7 +6252,11 @@ impl AgentPanel {
             .h(Tab::container_height(cx))
             .flex_shrink_0()
             .max_w_full()
-            .bg(cx.theme().colors().tab_bar_background)
+            .bg(settings::background::region_color(
+                cx.theme().colors().tab_bar_background,
+                settings::background::Region::Assistant,
+                cx,
+            ))
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .child(toolbar_content)
@@ -6617,8 +6625,9 @@ impl Render for AgentPanel {
             .size_full()
             .justify_between()
             .track_focus(&self.focus_handle)
-            .bg(settings::background::surface_color(
+            .bg(settings::background::region_color(
                 cx.theme().colors().panel_background,
+                settings::background::Region::Assistant,
                 cx,
             ))
             .on_action(cx.listener(|this, action: &NewThread, window, cx| {

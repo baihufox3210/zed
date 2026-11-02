@@ -54,6 +54,10 @@ pub(crate) fn render_background_preview(
                 .w_full()
                 .h(gpui::px(360.0))
                 .overflow_hidden()
+                .children(settings::background::render_window(
+                    cx.theme().colors().editor_background,
+                    cx,
+                ))
                 .child(editor),
         )
         .into_any_element()

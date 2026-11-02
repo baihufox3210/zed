@@ -1432,7 +1432,11 @@ impl Render for FailedToSpawnTerminal {
             .p_4()
             .items_center()
             .justify_center()
-            .bg(cx.theme().colors().editor_background)
+            .bg(settings::background::region_color(
+                cx.theme().colors().editor_background,
+                settings::background::Region::Terminal,
+                cx,
+            ))
             .child(
                 v_flex()
                     .max_w_112()

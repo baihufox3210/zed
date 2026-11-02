@@ -119,7 +119,6 @@ pub use git::{
 pub(crate) use git::{DiffHunkKey, StoredReviewComment};
 use git::{DiffReviewDragState, DiffReviewOverlay, InlineBlamePopover};
 pub(crate) use git::{DisplayDiffHunk, PhantomDiffReviewIndicator};
-use gpui::ReadGlobal as _;
 pub use hover_popover::hover_markdown_style;
 pub use inlays::Inlay;
 pub use inline_input::InlineInputState;
@@ -11545,19 +11544,11 @@ impl Editor {
         let background = match self.mode {
             EditorMode::SingleLine => cx.theme().system().transparent,
             EditorMode::AutoHeight { .. } => cx.theme().system().transparent,
-            EditorMode::Full { .. } => {
-                let opacity = SettingsStore::global(cx)
-                    .merged_settings()
-                    .background
-                    .as_ref()
-                    .filter(|background| {
-                        background.enabled == Some(true) && background.image_path.is_some()
-                    })
-                    .map(|background| background.editor_opacity.unwrap_or(0.8))
-                    .unwrap_or(1.0)
-                    .clamp(0.0, 1.0);
-                cx.theme().colors().editor_background.opacity(opacity)
-            }
+            EditorMode::Full { .. } => settings::background::region_color(
+                cx.theme().colors().editor_background,
+                settings::background::Region::Editor,
+                cx,
+            ),
             EditorMode::Minimap { .. } => cx.theme().colors().editor_background.opacity(0.7),
         };
 
@@ -12701,79 +12692,7 @@ impl Focusable for Editor {
 
 impl Render for Editor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let style = self.create_style(cx);
-        if !matches!(self.mode, EditorMode::Full { .. }) {
-            return EditorElement::new(&cx.entity(), style).into_any_element();
-        }
-        let background = SettingsStore::global(cx)
-            .merged_settings()
-            .background
-            .as_ref()
-            .filter(|background| background.enabled == Some(true))
-            .and_then(|background| {
-                Some((
-                    background.image_path.as_ref()?.clone(),
-                    background.image_opacity.unwrap_or(1.0).clamp(0.0, 1.0),
-                    background.size.unwrap_or_default(),
-                    background.position.unwrap_or_default(),
-                    background.blur.unwrap_or(0.0),
-                    background.overlay_opacity.unwrap_or(0.0).clamp(0.0, 1.0),
-                ))
-            });
-        if background.is_none() {
-            return EditorElement::new(&cx.entity(), style).into_any_element();
-        }
-        gpui::div()
-            .relative()
-            .size_full()
-            .overflow_hidden()
-            .bg(cx.theme().colors().editor_background)
-            .when_some(
-                background,
-                |container, (path, opacity, size, position, blur, overlay_opacity)| {
-                    let fit = match size {
-                        settings::BackgroundSize::Cover => gpui::ObjectFit::Cover,
-                        settings::BackgroundSize::Contain => gpui::ObjectFit::Contain,
-                        settings::BackgroundSize::Stretch => gpui::ObjectFit::Fill,
-                    };
-                    let (horizontal, vertical) = match position {
-                        settings::BackgroundPosition::Center => (0.5, 0.5),
-                        settings::BackgroundPosition::Top => (0.5, 0.0),
-                        settings::BackgroundPosition::Bottom => (0.5, 1.0),
-                        settings::BackgroundPosition::Left => (0.0, 0.5),
-                        settings::BackgroundPosition::Right => (1.0, 0.5),
-                    };
-                    let fallback_color = cx.theme().colors().editor_background;
-                    container
-                        .child(
-                            gpui::img(std::path::PathBuf::from(path))
-                                .object_fit(fit)
-                                .image_position(horizontal, vertical)
-                                .image_blur(blur)
-                                .with_fallback(move || {
-                                    gpui::div()
-                                        .size_full()
-                                        .bg(fallback_color)
-                                        .into_any_element()
-                                })
-                                .absolute()
-                                .inset_0()
-                                .size_full()
-                                .opacity(opacity),
-                        )
-                        .when(overlay_opacity > 0.0, |container| {
-                            container.child(
-                                gpui::div()
-                                    .absolute()
-                                    .inset_0()
-                                    .size_full()
-                                    .bg(gpui::black().opacity(overlay_opacity)),
-                            )
-                        })
-                },
-            )
-            .child(EditorElement::new(&cx.entity(), style))
-            .into_any_element()
+        EditorElement::new(&cx.entity(), self.create_style(cx))
     }
 }
 

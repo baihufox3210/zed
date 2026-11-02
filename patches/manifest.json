@@ -13,10 +13,10 @@
     {
       "id": "native-background-settings",
       "name": "Native Background Settings",
-      "description": "Native background settings, image selection, editor composition and cached image blur. Rebuild and restart required after source application.",
+      "description": "Native background settings with whole-window, editor-only and custom region scopes, image selection and cached blur. Rebuild and restart required after source application.",
       "category": "Display",
       "source": "patches/native-background-settings.patch",
-      "sha256": "9a575071e02b17a121dcc15f3f33bf70ac0803efd4ca28a832fb35ce3866c972",
+      "sha256": "d44e3fb2a485ada9a5d7dbaf16d1fb1bc08b3148820e82cda95802280717e017",
       "enabled": true,
       "rebuild_required": true
     }

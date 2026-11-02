@@ -4023,7 +4023,7 @@ impl Render for ConversationView {
         v_flex()
             .track_focus(&self.focus_handle)
             .size_full()
-            .bg(cx.theme().colors().panel_background)
+            .bg(if settings::background::includes(settings::background::Region::Assistant, cx) { gpui::transparent_black() } else { cx.theme().colors().panel_background })
             .child(v_flex().flex_1().min_h_0().child(content))
             .when(self.has_saved_input(), |this| {
                 this.child(

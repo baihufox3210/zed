@@ -574,6 +574,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::RestoreOnStartupBehavior>(render_dropdown)
         .add_basic_renderer::<settings::OnNewWindow>(render_dropdown)
         .add_basic_renderer::<settings::BottomDockLayout>(render_dropdown)
+        .add_basic_renderer::<settings::BackgroundScope>(render_dropdown)
         .add_basic_renderer::<settings::BackgroundSize>(render_dropdown)
         .add_basic_renderer::<settings::BackgroundPosition>(render_dropdown)
         .add_basic_renderer::<settings::OnLastWindowClosed>(render_dropdown)
@@ -1834,8 +1835,22 @@ impl SettingsWindow {
         .detach();
 
         let mut ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
+        let mut background_scope = SettingsStore::global(cx)
+            .merged_settings()
+            .background
+            .as_ref()
+            .and_then(|background| background.scope);
         cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
             this.fetch_files(window, cx);
+            let new_scope = SettingsStore::global(cx)
+                .merged_settings()
+                .background
+                .as_ref()
+                .and_then(|background| background.scope);
+            if new_scope != background_scope {
+                background_scope = new_scope;
+                this.rebuild_pages(window, cx);
+            }
 
             // Whenever settings are changed, it's possible that the changed
             // settings affects the rendering of the `SettingsWindow`, like is
@@ -5171,15 +5186,33 @@ fn render_background_number_field(
     };
     let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
     let value = value.copied().unwrap_or(0.0).clamp(0.0, maximum);
-    let numeric = render_editable_number_field(
-        field,
-        file.clone(),
-        metadata,
-        title,
-        description,
+    let scale = if maximum == 1.0 { 100.0 } else { 1.0 };
+    let numeric = NumberField::new(
+        format!("background-value-{title}"),
+        value * scale,
         window,
         cx,
-    );
+    )
+    .mode(NumberFieldMode::Edit, cx)
+    .tab_index(0_isize)
+    .aria_label(title)
+    .on_change({
+        let file = file.clone();
+        move |value, window, cx| {
+            let value = (*value / scale).clamp(0.0, maximum);
+            update_settings_file(
+                file.clone(),
+                field.json_path,
+                window,
+                cx,
+                move |content, cx| {
+                    (field.write)(content, Some(value), cx);
+                },
+            )
+            .log_err();
+        }
+    })
+    .into_any_element();
     let bounds = Rc::new(Cell::new(gpui::Bounds::<Pixels>::default()));
     let previous = Rc::new(Cell::new(value));
     let change = Rc::new({
@@ -5249,11 +5282,7 @@ fn render_background_number_field(
                 }),
         )
         .child(numeric)
-        .child(Label::new(if maximum == 1.0 {
-            format!("{:.0}%", value * 100.0)
-        } else {
-            format!("{value:.2} px")
-        }))
+        .child(Label::new(if maximum == 1.0 { "%" } else { "px" }))
         .into_any_element()
 }
 

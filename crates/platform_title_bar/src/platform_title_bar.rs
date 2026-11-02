@@ -306,7 +306,13 @@ impl Render for PlatformTitleBar {
                     .border(theme::CLIENT_SIDE_DECORATION_BORDER)
                     .border_color(titlebar_color),
             })
-            .bg(titlebar_color)
+            .bg(
+                if settings::background::includes(settings::background::Region::Chrome, cx) {
+                    gpui::transparent_black()
+                } else {
+                    titlebar_color
+                },
+            )
             .content_stretch()
             .child(
                 div()

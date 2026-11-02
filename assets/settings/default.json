@@ -1,6 +1,12 @@
 {
   "$schema": "zed://schemas/settings",
   "background": {
+    "scope": "window",
+    "editor": true,
+    "panels": true,
+    "assistant": true,
+    "terminal": true,
+    "chrome": true,
     "enabled": false,
     "image_opacity": 1.0,
     "editor_opacity": 0.8,

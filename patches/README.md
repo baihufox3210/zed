@@ -115,3 +115,15 @@ a rebuild and restart; changing background settings does not.
 registration. Revert the old version before updating. The replacement is checked
 against the checkout, hashed, and persisted without applying source changes.
 The CLI equivalent is `zed-patch <checkout> update <id> <replacement.patch>`.
+
+Background range is controlled by **Apply Background To**:
+
+- **Window** uses one continuous image across the Zed client area.
+- **Editor** shows the image only behind editors.
+- **Custom** exposes switches for Editor, Side Panels (Files/Git/Outline),
+  AI Assistant, Terminal, and Window Bars (title/tab/toolbar/status).
+
+Custom selections are retained when switching modes. Areas that are not selected
+keep their theme backgrounds. Images are rendered once at the window root;
+selected regions reveal that same image rather than independently scaling copies.
+Menus, selection highlights, and semantic backgrounds keep their theme colors.
