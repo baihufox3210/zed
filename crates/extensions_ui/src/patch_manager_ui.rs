@@ -1,6 +1,9 @@
 mod registration;
 
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context as _, Result};
 use gpui::{
@@ -55,6 +58,10 @@ pub(super) fn init(cx: &mut App) {
     })
     .detach();
 }
+
+/// Validation runs three Git commands per patch, so clicking back into the page
+/// reuses a recent result. Refresh, Validate and operations always revalidate.
+const FOCUS_REFRESH_INTERVAL: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, PartialEq)]
 enum Filter {
@@ -120,6 +127,7 @@ struct PatchManagerPage {
     busy: bool,
     message: String,
     error: Option<String>,
+    validated_at: Option<Instant>,
 }
 
 impl PatchManagerPage {
@@ -147,7 +155,10 @@ impl PatchManagerPage {
             .detach();
         let page_focus = cx.focus_handle();
         cx.on_focus_in(&page_focus, window, |page, _, cx| {
-            if page.registration.is_none() {
+            let recently_validated = page
+                .validated_at
+                .is_some_and(|validated_at| validated_at.elapsed() < FOCUS_REFRESH_INTERVAL);
+            if page.registration.is_none() && !recently_validated {
                 page.run(Operation::Refresh, cx);
             }
         })
@@ -165,6 +176,7 @@ impl PatchManagerPage {
             busy: false,
             message: String::new(),
             error: None,
+            validated_at: None,
         };
         page.run(Operation::Refresh, cx);
         page
@@ -230,7 +242,10 @@ impl PatchManagerPage {
                         page.root = Some(service.root().to_path_buf());
                         page.service = Some(service);
                         match patches {
-                            Ok(patches) => page.patches = patches,
+                            Ok(patches) => {
+                                page.patches = patches;
+                                page.validated_at = Some(Instant::now());
+                            }
                             Err(error) => {
                                 page.error = Some(format!("Could not refresh state: {error:#}"))
                             }
