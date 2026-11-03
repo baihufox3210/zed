@@ -6,7 +6,7 @@ use editor::{
     hover_popover::diagnostics_markdown_style,
 };
 use gpui::{AppContext, Entity, Focusable, WeakEntity};
-use language::{BufferId, Diagnostic, DiagnosticEntryRef, LanguageRegistry};
+use language::{BufferId, BufferSnapshot, Diagnostic, DiagnosticEntryRef, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{CopyButtonVisibility, Markdown, MarkdownElement};
 use settings::Settings;
@@ -23,10 +23,23 @@ impl DiagnosticRenderer {
     pub fn diagnostic_blocks_for_group(
         diagnostic_group: Vec<DiagnosticEntryRef<'_, Point>>,
         buffer_id: BufferId,
+        buffer: Option<&BufferSnapshot>,
         diagnostics_editor: Option<Arc<dyn DiagnosticsToolbarEditor>>,
         language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut App,
     ) -> Vec<DiagnosticBlock> {
+        let copy_text = |entry: &DiagnosticEntryRef<'_, Point>, cx: &App| -> SharedString {
+            match buffer {
+                Some(buffer) => editor::hover_popover::diagnostic_copy_text(
+                    entry.diagnostic,
+                    entry.range.clone(),
+                    buffer,
+                    cx,
+                )
+                .into(),
+                None => entry.diagnostic.message.as_shared_string().clone(),
+            }
+        };
         let Some(primary_ix) = diagnostic_group
             .iter()
             .position(|d| d.diagnostic.is_primary)
@@ -56,7 +69,7 @@ impl DiagnosticRenderer {
                     initial_range: primary.range.clone(),
                     severity: primary.diagnostic.severity,
                     diagnostics_editor: diagnostics_editor.clone(),
-                    copy_message: primary.diagnostic.message.as_shared_string().clone(),
+                    copy_message: copy_text(primary, cx),
                     markdown: cx.new(|cx| {
                         Markdown::new(markdown.into(), language_registry.clone(), None, cx)
                     }),
@@ -71,7 +84,7 @@ impl DiagnosticRenderer {
                     initial_range: entry.range.clone(),
                     severity: entry.diagnostic.severity,
                     diagnostics_editor: diagnostics_editor.clone(),
-                    copy_message: entry.diagnostic.message.as_shared_string().clone(),
+                    copy_message: copy_text(entry, cx),
                     markdown: cx.new(|cx| {
                         Markdown::new(markdown.into(), language_registry.clone(), None, cx)
                     }),
@@ -140,6 +153,7 @@ impl editor::DiagnosticRenderer for DiagnosticRenderer {
         let blocks = Self::diagnostic_blocks_for_group(
             diagnostic_group,
             buffer_id,
+            snapshot.buffer_snapshot().buffer_for_id(buffer_id),
             None,
             language_registry,
             cx,
@@ -175,6 +189,7 @@ impl editor::DiagnosticRenderer for DiagnosticRenderer {
         let blocks = Self::diagnostic_blocks_for_group(
             diagnostic_group,
             buffer_id,
+            None,
             None,
             language_registry,
             cx,
@@ -267,7 +282,7 @@ impl DiagnosticBlock {
             )
             .child(
                 CopyButton::new(copy_button_id, self.copy_message.clone())
-                    .tooltip_label("Copy Diagnostic"),
+                    .tooltip_label("Copy Diagnostic with Code"),
             )
             .into_any_element()
     }

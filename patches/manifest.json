@@ -21,6 +21,17 @@
       "enabled": true,
       "rebuild_required": true,
       "base": "main"
+    },
+    {
+      "id": "diagnostic-copy-with-code",
+      "name": "Copy Diagnostic with Code",
+      "description": "The Copy Diagnostic buttons in hover popovers, inline diagnostics and the diagnostics panel copy the severity, message, source and code, file location, and the affected source lines as a fenced code block instead of the message alone. Requires rebuilding and restarting Zed.",
+      "category": "Editor",
+      "source": "patches/diagnostic-copy-with-code.patch",
+      "sha256": "c5eb0191ad9a46f432a6551d5643562a5e40b3ea751674aad2d000b03b8e1ad2",
+      "enabled": true,
+      "rebuild_required": false,
+      "base": "main"
     }
   ]
 }

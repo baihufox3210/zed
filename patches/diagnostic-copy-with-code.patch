@@ -1,0 +1,357 @@
+diff --git a/crates/diagnostics/src/buffer_diagnostics.rs b/crates/diagnostics/src/buffer_diagnostics.rs
+index 40f93a9b25927169a444155b06d2544c96b6460d..a40492bbf76048d4638492e5a522035dc4178841 100644
+--- a/crates/diagnostics/src/buffer_diagnostics.rs
++++ b/crates/diagnostics/src/buffer_diagnostics.rs
+@@ -379,6 +379,7 @@ impl BufferDiagnosticsEditor {
+                     DiagnosticRenderer::diagnostic_blocks_for_group(
+                         group,
+                         buffer_snapshot.remote_id(),
++                        Some(&buffer_snapshot),
+                         Some(Arc::new(buffer_diagnostics_editor.clone())),
+                         languages,
+                         cx,
+diff --git a/crates/diagnostics/src/diagnostic_renderer.rs b/crates/diagnostics/src/diagnostic_renderer.rs
+index 903115f81b0c24b821c7b13ecf5af9333cf405be..f187f5d98ea3332fc49344bd970573d40a909fae 100644
+--- a/crates/diagnostics/src/diagnostic_renderer.rs
++++ b/crates/diagnostics/src/diagnostic_renderer.rs
+@@ -6,7 +6,7 @@ use editor::{
+     hover_popover::diagnostics_markdown_style,
+ };
+ use gpui::{AppContext, Entity, Focusable, WeakEntity};
+-use language::{BufferId, Diagnostic, DiagnosticEntryRef, LanguageRegistry};
++use language::{BufferId, BufferSnapshot, Diagnostic, DiagnosticEntryRef, LanguageRegistry};
+ use lsp::DiagnosticSeverity;
+ use markdown::{CopyButtonVisibility, Markdown, MarkdownElement};
+ use settings::Settings;
+@@ -23,10 +23,23 @@ impl DiagnosticRenderer {
+     pub fn diagnostic_blocks_for_group(
+         diagnostic_group: Vec<DiagnosticEntryRef<'_, Point>>,
+         buffer_id: BufferId,
++        buffer: Option<&BufferSnapshot>,
+         diagnostics_editor: Option<Arc<dyn DiagnosticsToolbarEditor>>,
+         language_registry: Option<Arc<LanguageRegistry>>,
+         cx: &mut App,
+     ) -> Vec<DiagnosticBlock> {
++        let copy_text = |entry: &DiagnosticEntryRef<'_, Point>, cx: &App| -> SharedString {
++            match buffer {
++                Some(buffer) => editor::hover_popover::diagnostic_copy_text(
++                    entry.diagnostic,
++                    entry.range.clone(),
++                    buffer,
++                    cx,
++                )
++                .into(),
++                None => entry.diagnostic.message.as_shared_string().clone(),
++            }
++        };
+         let Some(primary_ix) = diagnostic_group
+             .iter()
+             .position(|d| d.diagnostic.is_primary)
+@@ -56,7 +69,7 @@ impl DiagnosticRenderer {
+                     initial_range: primary.range.clone(),
+                     severity: primary.diagnostic.severity,
+                     diagnostics_editor: diagnostics_editor.clone(),
+-                    copy_message: primary.diagnostic.message.as_shared_string().clone(),
++                    copy_message: copy_text(primary, cx),
+                     markdown: cx.new(|cx| {
+                         Markdown::new(markdown.into(), language_registry.clone(), None, cx)
+                     }),
+@@ -71,7 +84,7 @@ impl DiagnosticRenderer {
+                     initial_range: entry.range.clone(),
+                     severity: entry.diagnostic.severity,
+                     diagnostics_editor: diagnostics_editor.clone(),
+-                    copy_message: entry.diagnostic.message.as_shared_string().clone(),
++                    copy_message: copy_text(entry, cx),
+                     markdown: cx.new(|cx| {
+                         Markdown::new(markdown.into(), language_registry.clone(), None, cx)
+                     }),
+@@ -140,6 +153,7 @@ impl editor::DiagnosticRenderer for DiagnosticRenderer {
+         let blocks = Self::diagnostic_blocks_for_group(
+             diagnostic_group,
+             buffer_id,
++            snapshot.buffer_snapshot().buffer_for_id(buffer_id),
+             None,
+             language_registry,
+             cx,
+@@ -176,6 +190,7 @@ impl editor::DiagnosticRenderer for DiagnosticRenderer {
+             diagnostic_group,
+             buffer_id,
+             None,
++            None,
+             language_registry,
+             cx,
+         );
+@@ -267,7 +282,7 @@ impl DiagnosticBlock {
+             )
+             .child(
+                 CopyButton::new(copy_button_id, self.copy_message.clone())
+-                    .tooltip_label("Copy Diagnostic"),
++                    .tooltip_label("Copy Diagnostic with Code"),
+             )
+             .into_any_element()
+     }
+diff --git a/crates/diagnostics/src/diagnostics.rs b/crates/diagnostics/src/diagnostics.rs
+index 6534602aa735bc998d7499f104b71ac92d95c21f..fb23fcfdd39120e9967184c8fe09236444325ba6 100644
+--- a/crates/diagnostics/src/diagnostics.rs
++++ b/crates/diagnostics/src/diagnostics.rs
+@@ -557,6 +557,7 @@ impl ProjectDiagnosticsEditor {
+                     crate::diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
+                         group,
+                         buffer_snapshot.remote_id(),
++                        Some(&buffer_snapshot),
+                         Some(diagnostics_toolbar_editor.clone()),
+                         languages,
+                         cx,
+diff --git a/crates/diagnostics/src/diagnostics_tests.rs b/crates/diagnostics/src/diagnostics_tests.rs
+index a18719d55e28540341e666b44cd47fb496c419f3..dd8f6393ab5cfcdb8b1331a52ecd7b6b1e6f9543 100644
+--- a/crates/diagnostics/src/diagnostics_tests.rs
++++ b/crates/diagnostics/src/diagnostics_tests.rs
+@@ -1386,6 +1386,7 @@ fn test_nearby_related_diagnostic_links_back_to_primary(cx: &mut TestAppContext)
+             buffer_id,
+             None,
+             None,
++            None,
+             cx,
+         );
+ 
+@@ -1500,7 +1501,7 @@ async fn test_markup_content_diagnostic_messages_render_as_markdown(cx: &mut Tes
+             .diagnostic_group(buffer_id, 0)
+             .collect::<Vec<_>>();
+         let blocks = diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
+-            group, buffer_id, None, None, cx,
++            group, buffer_id, None, None, None, cx,
+         );
+         assert_eq!(
+             blocks[0].markdown.read(cx).source(),
+@@ -1512,7 +1513,7 @@ async fn test_markup_content_diagnostic_messages_render_as_markdown(cx: &mut Tes
+             .diagnostic_group(buffer_id, 1)
+             .collect::<Vec<_>>();
+         let blocks = diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
+-            group, buffer_id, None, None, cx,
++            group, buffer_id, None, None, None, cx,
+         );
+         assert_eq!(
+             blocks[0].markdown.read(cx).source(),
+@@ -1524,7 +1525,7 @@ async fn test_markup_content_diagnostic_messages_render_as_markdown(cx: &mut Tes
+             .diagnostic_group(buffer_id, 2)
+             .collect::<Vec<_>>();
+         let blocks = diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
+-            group, buffer_id, None, None, cx,
++            group, buffer_id, None, None, None, cx,
+         );
+         assert_eq!(
+             blocks[0].markdown.read(cx).source(),
+@@ -1536,7 +1537,7 @@ async fn test_markup_content_diagnostic_messages_render_as_markdown(cx: &mut Tes
+             .diagnostic_group(buffer_id, 3)
+             .collect::<Vec<_>>();
+         let blocks = diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
+-            group, buffer_id, None, None, cx,
++            group, buffer_id, None, None, None, cx,
+         );
+         assert_eq!(
+             blocks[0].markdown.read(cx).source(),
+diff --git a/crates/editor/src/hover_popover.rs b/crates/editor/src/hover_popover.rs
+index dc9af1f11d4681e7e2558daaf8518e3f6226168e..b6b3756d3dc657cb69fb280e0fe8a8c5970f10ac 100644
+--- a/crates/editor/src/hover_popover.rs
++++ b/crates/editor/src/hover_popover.rs
+@@ -336,6 +336,25 @@ fn show_hover(
+                         .range
+                         .end
+                         .to_point(&snapshot.buffer_snapshot());
++                let copy_text = cx.update(|_, cx| {
++                    let message = local_diagnostic
++                        .diagnostic
++                        .message
++                        .as_shared_string()
++                        .clone();
++                    snapshot
++                        .buffer_snapshot()
++                        .buffer_for_id(buffer_id)
++                        .map_or(message, |buffer| {
++                            diagnostic_copy_text(
++                                local_diagnostic.diagnostic,
++                                point_range.clone(),
++                                buffer,
++                                cx,
++                            )
++                            .into()
++                        })
++                })?;
+                 let markdown = cx.update(|_, cx| {
+                     renderer
+                         .as_ref()
+@@ -390,6 +409,7 @@ fn show_hover(
+                 let scroll_handle = ScrollHandle::new();
+ 
+                 Some(DiagnosticPopover {
++                    copy_text,
+                     local_diagnostic,
+                     markdown,
+                     border_color,
+@@ -1696,8 +1716,93 @@ impl InfoPopover {
+     }
+ }
+ 
++const MAX_COPIED_DIAGNOSTIC_LINES: u32 = 30;
++
++/// Formats a diagnostic for the clipboard with its location and the source
++/// lines it covers, so it can be pasted into an issue or a chat as is.
++pub fn diagnostic_copy_text(
++    diagnostic: &language::Diagnostic,
++    range: Range<text::Point>,
++    buffer: &language::BufferSnapshot,
++    cx: &App,
++) -> String {
++    let severity = match diagnostic.severity {
++        lsp::DiagnosticSeverity::ERROR => "error",
++        lsp::DiagnosticSeverity::WARNING => "warning",
++        lsp::DiagnosticSeverity::INFORMATION => "info",
++        lsp::DiagnosticSeverity::HINT => "hint",
++        _ => "diagnostic",
++    };
++    let mut text = format!("{severity}: {}", diagnostic.message.as_str().trim_end());
++    let origin = [
++        diagnostic.source.clone(),
++        diagnostic.code.as_ref().map(ToString::to_string),
++    ]
++    .into_iter()
++    .flatten()
++    .collect::<Vec<_>>();
++    if !origin.is_empty() {
++        text.push_str(&format!(" ({})", origin.join(" ")));
++    }
++
++    let max_row = buffer.max_point().row;
++    let start_row = range.start.row.min(max_row);
++    // A range ending at column 0 does not include any text of its last row.
++    let end_row = if range.end.row > range.start.row && range.end.column == 0 {
++        range.end.row - 1
++    } else {
++        range.end.row
++    }
++    .clamp(start_row, max_row);
++    let shown_end_row = end_row.min(start_row + MAX_COPIED_DIAGNOSTIC_LINES - 1);
++
++    if let Some(file) = buffer.file() {
++        text.push_str(&format!(
++            "\n--> {}:{}:{}",
++            file.path().display(file.path_style(cx)),
++            range.start.row + 1,
++            range.start.column + 1
++        ));
++    }
++
++    let number_width = (shown_end_row + 1).to_string().len();
++    let mut code = String::new();
++    for row in start_row..=shown_end_row {
++        let line: String = buffer
++            .text_for_range(text::Point::new(row, 0)..text::Point::new(row, buffer.line_len(row)))
++            .collect();
++        code.push_str(&format!(
++            "{:>number_width$} | {}\n",
++            row + 1,
++            line.trim_end()
++        ));
++    }
++    if shown_end_row < end_row {
++        code.push_str(&format!(
++            "{:>number_width$} | … ({} more lines)\n",
++            "",
++            end_row - shown_end_row
++        ));
++    }
++
++    // A fence longer than any backtick run inside the code keeps it intact.
++    let longest_backtick_run = code
++        .split(|character| character != '`')
++        .map(str::len)
++        .max()
++        .unwrap_or(0);
++    let fence = "`".repeat(longest_backtick_run.max(2) + 1);
++    let language = buffer
++        .language()
++        .map(|language| language.code_fence_block_name().to_string())
++        .unwrap_or_default();
++    text.push_str(&format!("\n\n{fence}{language}\n{code}{fence}"));
++    text
++}
++
+ pub struct DiagnosticPopover {
+     pub(crate) local_diagnostic: DiagnosticEntry<Anchor>,
++    copy_text: SharedString,
+     markdown: Entity<Markdown>,
+     border_color: Hsla,
+     background_color: Hsla,
+@@ -1800,15 +1905,12 @@ impl DiagnosticPopover {
+                                 ),
+                             ),
+                     )
+-                    .child(div().absolute().top_1().right_1().child({
+-                        let message = self
+-                            .local_diagnostic
+-                            .diagnostic
+-                            .message
+-                            .as_shared_string()
+-                            .clone();
+-                        CopyButton::new("copy-diagnostic", message).tooltip_label("Copy Diagnostic")
+-                    }))
++                    .child(
++                        div().absolute().top_1().right_1().child(
++                            CopyButton::new("copy-diagnostic", self.copy_text.clone())
++                                .tooltip_label("Copy Diagnostic with Code"),
++                        ),
++                    )
+                     .custom_scrollbars(
+                         Scrollbars::for_settings::<EditorSettingsScrollbarProxy>()
+                             .tracked_scroll_handle(&self.scroll_handle),
+@@ -4711,4 +4813,50 @@ mod tests {
+             .map(|popover| popover.get_rendered_text(cx))
+             .collect()
+     }
++
++    #[gpui::test]
++    fn copies_message_location_and_source_lines(cx: &mut gpui::TestAppContext) {
++        use gpui::AppContext as _;
++        use language::{Buffer, Diagnostic, DiagnosticMessage};
++        use text::Point;
++
++        let buffer = cx.new(|cx| {
++            Buffer::local(
++                "fn main() {\n    let x: u32 = \"a\";\n    let y = ```;\n}\n",
++                cx,
++            )
++        });
++        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
++        let diagnostic = Diagnostic {
++            source: Some("rustc".into()),
++            code: Some(lsp::NumberOrString::String("E0308".into())),
++            severity: lsp::DiagnosticSeverity::ERROR,
++            message: DiagnosticMessage::from("mismatched types\n"),
++            ..Default::default()
++        };
++        let text = cx.update(|cx| {
++            super::diagnostic_copy_text(
++                &diagnostic,
++                Point::new(1, 17)..Point::new(2, 0),
++                &snapshot,
++                cx,
++            )
++        });
++        assert_eq!(
++            text,
++            "error: mismatched types (rustc E0308)\n\n```\n2 |     let x: u32 = \"a\";\n```"
++        );
++
++        let text = cx.update(|cx| {
++            super::diagnostic_copy_text(
++                &diagnostic,
++                Point::new(1, 4)..Point::new(2, 5),
++                &snapshot,
++                cx,
++            )
++        });
++        assert!(
++            text.ends_with("\n\n````\n2 |     let x: u32 = \"a\";\n3 |     let y = ```;\n````")
++        );
++    }
+ }

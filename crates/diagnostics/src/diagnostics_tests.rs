@@ -1386,6 +1386,7 @@ fn test_nearby_related_diagnostic_links_back_to_primary(cx: &mut TestAppContext)
             buffer_id,
             None,
             None,
+            None,
             cx,
         );
 
@@ -1500,7 +1501,7 @@ async fn test_markup_content_diagnostic_messages_render_as_markdown(cx: &mut Tes
             .diagnostic_group(buffer_id, 0)
             .collect::<Vec<_>>();
         let blocks = diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
-            group, buffer_id, None, None, cx,
+            group, buffer_id, None, None, None, cx,
         );
         assert_eq!(
             blocks[0].markdown.read(cx).source(),
@@ -1512,7 +1513,7 @@ async fn test_markup_content_diagnostic_messages_render_as_markdown(cx: &mut Tes
             .diagnostic_group(buffer_id, 1)
             .collect::<Vec<_>>();
         let blocks = diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
-            group, buffer_id, None, None, cx,
+            group, buffer_id, None, None, None, cx,
         );
         assert_eq!(
             blocks[0].markdown.read(cx).source(),
@@ -1524,7 +1525,7 @@ async fn test_markup_content_diagnostic_messages_render_as_markdown(cx: &mut Tes
             .diagnostic_group(buffer_id, 2)
             .collect::<Vec<_>>();
         let blocks = diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
-            group, buffer_id, None, None, cx,
+            group, buffer_id, None, None, None, cx,
         );
         assert_eq!(
             blocks[0].markdown.read(cx).source(),
@@ -1536,7 +1537,7 @@ async fn test_markup_content_diagnostic_messages_render_as_markdown(cx: &mut Tes
             .diagnostic_group(buffer_id, 3)
             .collect::<Vec<_>>();
         let blocks = diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
-            group, buffer_id, None, None, cx,
+            group, buffer_id, None, None, None, cx,
         );
         assert_eq!(
             blocks[0].markdown.read(cx).source(),
