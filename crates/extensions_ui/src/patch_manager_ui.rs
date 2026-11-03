@@ -69,6 +69,7 @@ enum Filter {
     Enabled,
     Disabled,
     Conflicts,
+    Outdated,
 }
 
 #[derive(Clone)]
@@ -80,6 +81,7 @@ enum Operation {
     Revert(String),
     Remove(String),
     Register(PathBuf, patch_manager::Patch),
+    Regenerate(String),
 }
 
 impl Operation {
@@ -98,6 +100,9 @@ impl Operation {
             }
             Self::Remove(_) => "Registration removed. The patch file was retained.",
             Self::Register(..) => "Patch registered. Source application is a separate operation.",
+            Self::Regenerate(_) => {
+                "Patch regenerated from the checkout. Source files were not changed."
+            }
         }
     }
 
@@ -110,6 +115,7 @@ impl Operation {
             Self::Revert(_) => "Reverting patch…",
             Self::Remove(_) => "Removing registration…",
             Self::Register(..) => "Validating and registering patch…",
+            Self::Regenerate(_) => "Regenerating patch from the checkout…",
         }
     }
 }
@@ -186,7 +192,10 @@ impl PatchManagerPage {
         if self.busy {
             return;
         }
-        if matches!(&operation, Operation::Apply(_) | Operation::Revert(_)) {
+        if matches!(
+            &operation,
+            Operation::Apply(_) | Operation::Revert(_) | Operation::Regenerate(_)
+        ) {
             let dirty = self
                 .workspace
                 .read_with(cx, |workspace, cx| {
@@ -200,8 +209,9 @@ impl PatchManagerPage {
                 })
                 .unwrap_or(true);
             if dirty {
-                self.error =
-                    Some("Save open buffers before applying or reverting source patches.".into());
+                self.error = Some(
+                    "Save open buffers before applying, reverting or regenerating patches.".into(),
+                );
                 cx.notify();
                 return;
             }
@@ -229,6 +239,7 @@ impl PatchManagerPage {
                 Operation::Revert(id) => service.apply(&id, true),
                 Operation::Remove(id) => service.remove(&id),
                 Operation::Register(path, patch) => service.register(&path, patch),
+                Operation::Regenerate(id) => service.regenerate(&id, None, &[]).map(drop),
             };
             let patches = service.list();
             anyhow::Ok((service, patches, operation_result))
@@ -294,6 +305,10 @@ impl PatchManagerPage {
             Operation::Revert(_) => (
                 "Revert patch from source?",
                 "This removes the patch's changes from the displayed checkout. Save affected editor buffers first. A build and restart are required. Other edits may prevent a safe revert.",
+            ),
+            Operation::Regenerate(_) => (
+                "Regenerate patch from the checkout?",
+                "The stored .patch file is replaced with the difference between its base revision and the files currently on disk. Source files are not changed. Save open buffers first so the patch captures them.",
             ),
             Operation::Remove(_) => (
                 "Remove patch registration?",
@@ -496,6 +511,14 @@ impl PatchManagerPage {
                         state.rebuild_required
                     ),
                     format!("Patch source: {}", patch.source),
+                    format!(
+                        "Base revision: {}{}",
+                        patch
+                            .base
+                            .as_deref()
+                            .unwrap_or("not set (regenerate with zed-patch … --base <revision>)"),
+                        if state.outdated { " · Outdated" } else { "" }
+                    ),
                     "Build / restart: required after apply or revert; runtime state unverified"
                         .into(),
                 ]
@@ -529,6 +552,20 @@ impl PatchManagerPage {
                             .on_click(cx.listener({
                                 let id = id.clone();
                                 move |page, _, _, cx| page.choose_update(id.clone(), cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("regenerate", "Regenerate Patch")
+                            .disabled(
+                                self.busy
+                                    || patch.base.is_none()
+                                    || state.compatibility == Compatibility::Compatible,
+                            )
+                            .on_click(cx.listener({
+                                let id = id.clone();
+                                move |page, _, window, cx| {
+                                    page.confirm(Operation::Regenerate(id.clone()), window, cx)
+                                }
                             })),
                     )
                     .child(
@@ -593,6 +630,7 @@ impl PatchManagerPage {
                     Filter::Enabled => state.patch.enabled,
                     Filter::Disabled => !state.patch.enabled,
                     Filter::Conflicts => state.compatibility == Compatibility::Conflict,
+                    Filter::Outdated => state.outdated,
                 };
                 matches_filter
                     && format!(
@@ -638,6 +676,7 @@ impl PatchManagerPage {
                         (Filter::Enabled, "Enabled"),
                         (Filter::Disabled, "Disabled"),
                         (Filter::Conflicts, "Conflicts"),
+                        (Filter::Outdated, "Outdated"),
                     ]
                     .into_iter()
                     .map(|(filter, label)| {
@@ -682,7 +721,7 @@ impl PatchManagerPage {
                             .gap_2()
                             .child(
                                 Label::new(format!(
-                                    "{} · {}",
+                                    "{} · {}{}",
                                     patch.category,
                                     match state.compatibility {
                                         Compatibility::Compatible if state.rebuild_required =>
@@ -691,6 +730,11 @@ impl PatchManagerPage {
                                         Compatibility::AlreadyApplied =>
                                             "Applied · Rebuild required",
                                         Compatibility::Conflict => "Validation failed / Conflict",
+                                    },
+                                    if state.outdated {
+                                        " · Outdated — regenerate"
+                                    } else {
+                                        ""
                                     }
                                 ))
                                 .size(LabelSize::Small)

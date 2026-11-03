@@ -108,6 +108,7 @@ impl Registration {
                             category: (*category).into(), source: String::new(), sha256: String::new(),
                             enabled: registration.enabled,
                             rebuild_required: false,
+                            base: None,
                         };
                         page.run(Operation::Register(source, patch), cx);
                     })))

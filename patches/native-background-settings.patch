@@ -1,15 +1,3 @@
-diff --git a/Cargo.lock b/Cargo.lock
-index cc60cc020833d3b42370bd824f4f69dbd9d40198..b7f216352d321fdf04801d137e35e0298161e159 100644
---- a/Cargo.lock
-+++ b/Cargo.lock
-@@ -16429,6 +16429,7 @@ dependencies = [
-  "heck 0.5.0",
-  "http_client",
-  "http_proxy",
-+ "image",
-  "itertools 0.14.0",
-  "language",
-  "language_model",
 diff --git a/assets/settings/default.json b/assets/settings/default.json
 index 8172ebde474358ea7883b59e2293cb9aa0c190ed..5aa48d1f60c3bb061d3625ed43dd5455accee42e 100644
 --- a/assets/settings/default.json

@@ -43,6 +43,7 @@ cargo run -p patch_manager --bin zed-patch -- . revert wayland-ime-preedit-curso
 cargo run -p patch_manager --bin zed-patch -- . disable wayland-ime-preedit-cursor
 cargo run -p patch_manager --bin zed-patch -- . remove wayland-ime-preedit-cursor --confirm-source-change
 cargo run -p patch_manager --bin zed-patch -- . register /path/example.patch /path/metadata.json
+cargo run -p patch_manager --bin zed-patch -- . regenerate wayland-ime-preedit-cursor --base main
 ```
 
 Registration metadata uses the same `Patch` schema as the manifest. `source`,
@@ -64,6 +65,30 @@ excluded. A stored SHA-256 detects changed patch content. Apply never uses
 `--reject`, `--3way`, reset, checkout or stash. External editors and Git commands
 do not honor this service's lock; Git rechecks application against current disk
 contents and refuses conflicts. Save and review the checkout before applying.
+
+## Regenerating patches
+
+A registration may record a `base` Git revision. The patch is then expected to
+equal `git diff <base>` of its files in the current checkout, so source edits
+made after registration can be captured without hand-writing a new `.patch`:
+
+```sh
+cargo run -p patch_manager --bin zed-patch -- . regenerate native-background-settings --base main
+cargo run -p patch_manager --bin zed-patch -- . regenerate native-background-settings --add crates/editor/src/element.rs
+```
+
+`--base` is stored for later runs; `--add` includes files the patch did not
+touch before. Regeneration never changes source files: the new patch must
+reverse-apply to the checkout, and new files must be tracked with `git add`.
+`Cargo.lock` is left out because it collects changes from every patch and
+Cargo rewrites it on the next build. Files changed by another registered patch
+are refused, since one diff cannot attribute them to the right patch.
+
+A patch with a base that is applied or conflicting is compared with the
+checkout on every validation. When they differ it is reported as **Outdated**
+in the page (with an **Outdated** filter and a **Regenerate Patch** button)
+and `zed-patch validate` fails, so a stale registry is noticed before it is
+shared.
 
 ## Core integration
 
@@ -92,7 +117,7 @@ cargo check -p extensions_ui --tests
 Service tests use isolated Git repositories, including a complete validate,
 preview, revert and reapply cycle for the built-in patch. The GPUI test covers
 action dispatch, tab reuse, closure, reopening and an unavailable-checkout error.
-Validation completed: thirteen service tests, the GPUI tab lifecycle test, four
+Validation completed: fifteen service tests, the GPUI tab lifecycle test, four
 Wayland cursor tests, CLI operation flows, UI and Wayland compilation checks,
 service Clippy checks, and formatting checks passed.
 
