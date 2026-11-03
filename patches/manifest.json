@@ -16,7 +16,7 @@
       "description": "Native background settings with whole-window, editor-only and custom region scopes, image selection and cached blur. Rebuild and restart required after source application.",
       "category": "Display",
       "source": "patches/native-background-settings.patch",
-      "sha256": "08f08fcae77689325f1e25a952c2a6bc269aec9175b4f5b5fea03ee30b6463cd",
+      "sha256": "f24fefe816bac28369277a8d7a93cb07d7ed759f1a4d07668fcd2f0516942ac9",
       "enabled": true,
       "rebuild_required": true
     }

@@ -1,7 +1,7 @@
 mod components;
-mod patch_manager_ui;
 mod extension_suggestions;
 mod extension_version_selector;
+mod patch_manager_ui;
 
 use std::sync::OnceLock;
 use std::time::Duration;

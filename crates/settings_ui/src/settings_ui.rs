@@ -5150,6 +5150,18 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
         .into_any_element()
 }
 
+/// Writing the settings file on every pointer move would rewrite it dozens of
+/// times per drag, so intermediate values are saved at most this often and the
+/// final value is saved when the pointer is released.
+const SLIDER_SAVE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(150);
+
+#[derive(Default)]
+struct SliderDrag {
+    value: Option<f32>,
+    saved_value: Option<f32>,
+    last_saved_at: Option<std::time::Instant>,
+}
+
 /// Background values are fractions stored in 0..=1 (shown as percentages) except
 /// blur, which is stored in pixels.
 fn background_slider_range(json_path: &str) -> Option<(f32, &'static str)> {
@@ -5206,9 +5218,25 @@ fn render_background_number_field(
     })
     .into_any_element();
     let bounds = Rc::new(Cell::new(gpui::Bounds::<Pixels>::default()));
-    let previous = Rc::new(Cell::new(value));
+    let drag = window.use_keyed_state(format!("background-slider-{title}"), cx, |_, _| {
+        SliderDrag::default()
+    });
+    let save = Rc::new(move |value: f32, window: &mut Window, cx: &mut App| {
+        update_settings_file(
+            file.clone(),
+            field.json_path,
+            window,
+            cx,
+            move |content, cx| {
+                (field.write)(content, Some(value), cx);
+            },
+        )
+        .log_err();
+    });
     let change = Rc::new({
         let bounds = bounds.clone();
+        let drag = drag.clone();
+        let save = save.clone();
         move |position: gpui::Point<Pixels>, window: &mut Window, cx: &mut App| {
             let bounds = bounds.get();
             if bounds.size.width <= px(0.0) {
@@ -5216,21 +5244,42 @@ fn render_background_number_field(
             }
             let fraction = ((position.x - bounds.origin.x) / bounds.size.width).clamp(0.0, 1.0);
             let value = (fraction * maximum * 100.0).round() / 100.0;
-            if previous.replace(value) == value {
-                return;
+            let should_save = drag.update(cx, |drag, cx| {
+                if drag.value == Some(value) {
+                    return false;
+                }
+                drag.value = Some(value);
+                cx.notify();
+                let due = drag
+                    .last_saved_at
+                    .is_none_or(|saved_at| saved_at.elapsed() >= SLIDER_SAVE_INTERVAL);
+                if due {
+                    drag.last_saved_at = Some(std::time::Instant::now());
+                    drag.saved_value = Some(value);
+                }
+                due
+            });
+            if should_save {
+                save(value, window, cx);
             }
-            update_settings_file(
-                file.clone(),
-                field.json_path,
-                window,
-                cx,
-                move |content, cx| {
-                    (field.write)(content, Some(value), cx);
-                },
-            )
-            .log_err();
         }
     });
+    let finish = Rc::new({
+        let drag = drag.clone();
+        move |window: &mut Window, cx: &mut App| {
+            let pending = drag.update(cx, |drag, cx| {
+                let finished = std::mem::take(drag);
+                cx.notify();
+                finished
+                    .value
+                    .filter(|value| finished.saved_value != Some(*value))
+            });
+            if let Some(value) = pending {
+                save(value, window, cx);
+            }
+        }
+    });
+    let value = drag.read(cx).value.unwrap_or(value);
     h_flex()
         .gap_3()
         .child(
@@ -5267,9 +5316,23 @@ fn render_background_number_field(
                     let change = change.clone();
                     move |event, window, cx| change(event.position, window, cx)
                 })
-                .on_mouse_move(move |event, window, cx| {
-                    if event.pressed_button == Some(gpui::MouseButton::Left) {
-                        change(event.position, window, cx);
+                .on_mouse_move({
+                    let drag = drag.clone();
+                    move |event, window, cx| {
+                        if event.pressed_button == Some(gpui::MouseButton::Left)
+                            && drag.read(cx).value.is_some()
+                        {
+                            change(event.position, window, cx);
+                        }
+                    }
+                })
+                .on_mouse_up(gpui::MouseButton::Left, {
+                    let finish = finish.clone();
+                    move |_, window, cx| finish(window, cx)
+                })
+                .on_mouse_up_out(gpui::MouseButton::Left, move |_, window, cx| {
+                    if drag.read(cx).value.is_some() {
+                        finish(window, cx);
                     }
                 }),
         )
