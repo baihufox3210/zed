@@ -31,6 +31,7 @@ fn metadata() -> Patch {
         sha256: String::new(),
         enabled: false,
         rebuild_required: false,
+        base: None,
     }
 }
 
@@ -324,5 +325,107 @@ fn renames_report_both_paths() -> Result<()> {
         )
         .is_err()
     );
+    Ok(())
+}
+
+fn commit_all(service: &PatchService) -> Result<()> {
+    for arguments in [
+        &["add", "-A"][..],
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "--quiet",
+            "-m",
+            "base",
+        ][..],
+    ] {
+        git_output(&service.root, arguments)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn regenerate_tracks_source_changes_and_reports_outdated_patches() -> Result<()> {
+    let (_directory, service) = checkout()?;
+    commit_all(&service)?;
+    register(&service, PATCH)?;
+    assert!(service.regenerate("example", None, &[]).is_err());
+    service.set_enabled("example", true)?;
+    service.apply("example", false)?;
+    assert!(service.regenerate("example", Some("HEAD"), &[])?);
+    let state = first(&service)?;
+    assert_eq!(state.patch.base.as_deref(), Some("HEAD"));
+    assert_eq!(state.compatibility, Compatibility::AlreadyApplied);
+    assert!(!state.outdated);
+
+    fs::write(service.root.join("example.txt"), "after\nmore\n")?;
+    let state = first(&service)?;
+    assert_eq!(state.compatibility, Compatibility::Conflict);
+    assert!(state.outdated);
+    assert!(state.validation.contains("Outdated"));
+
+    assert!(service.regenerate("example", None, &[])?);
+    let state = first(&service)?;
+    assert_eq!(state.compatibility, Compatibility::AlreadyApplied);
+    assert!(!state.outdated);
+    assert!(fs::read_to_string(service.root.join("patches/example.patch"))?.contains("+more"));
+    assert!(!service.regenerate("example", None, &[])?);
+
+    service.apply("example", true)?;
+    let state = first(&service)?;
+    assert_eq!(state.compatibility, Compatibility::Compatible);
+    assert!(!state.outdated);
+    assert_eq!(
+        fs::read_to_string(service.root.join("example.txt"))?,
+        "before\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn regenerate_rejects_unsafe_inputs() -> Result<()> {
+    let (_directory, service) = checkout()?;
+    fs::write(service.root.join("other.txt"), "one\n")?;
+    commit_all(&service)?;
+    register(&service, PATCH)?;
+    service.set_enabled("example", true)?;
+    service.apply("example", false)?;
+    assert!(
+        service
+            .regenerate("example", Some("--output=x"), &[])
+            .is_err()
+    );
+    assert!(service.regenerate("example", Some("missing"), &[]).is_err());
+    assert!(
+        service
+            .regenerate("example", Some("HEAD"), &["../escape".into()])
+            .is_err()
+    );
+    fs::write(service.root.join("untracked.txt"), "new\n")?;
+    assert!(
+        service
+            .regenerate("example", Some("HEAD"), &["untracked.txt".into()])
+            .is_err()
+    );
+
+    let source = service.root.join("other.patch");
+    fs::write(
+        &source,
+        "diff --git a/other.txt b/other.txt\n--- a/other.txt\n+++ b/other.txt\n@@ -1 +1 @@\n-one\n+two\n",
+    )?;
+    let mut other = metadata();
+    other.id = "other".into();
+    service.register(&source, other)?;
+    service.set_enabled("other", true)?;
+    service.apply("other", false)?;
+    let error = service
+        .regenerate("example", Some("HEAD"), &["other.txt".into()])
+        .err()
+        .context("Overlapping regeneration succeeded")?;
+    assert!(format!("{error:#}").contains("also changed by patch other"));
+    assert!(service.regenerate("example", Some("HEAD"), &[])?);
     Ok(())
 }

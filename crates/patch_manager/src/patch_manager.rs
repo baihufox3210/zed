@@ -16,6 +16,9 @@ pub const CATEGORIES: &[&str] = &[
     "Other",
 ];
 const MAX_PATCH_SIZE: u64 = 10 * 1024 * 1024;
+/// Lockfiles accumulate unrelated changes from every patch and Cargo rewrites
+/// them on the next build, so regenerated patches leave them out.
+const LOCKFILES: &[&str] = &["Cargo.lock"];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -32,6 +35,11 @@ pub struct Patch {
     pub enabled: bool,
     #[serde(default)]
     pub rebuild_required: bool,
+    /// Git revision the patch is generated against. When set, the patch can be
+    /// regenerated from the checkout and is reported as outdated when the
+    /// checkout no longer matches it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -54,6 +62,7 @@ pub struct PatchState {
     pub affected_files: Vec<String>,
     pub validation: String,
     pub rebuild_required: bool,
+    pub outdated: bool,
 }
 
 #[derive(Clone)]
@@ -247,14 +256,7 @@ impl PatchService {
         }
         let mut files: Vec<String> = Vec::new();
         for file in paths {
-            ensure!(safe_relative_path(file), "Unsafe affected path: {file}");
-            ensure!(
-                !file.starts_with("patches/")
-                    && !file
-                        .split('/')
-                        .any(|part| part.eq_ignore_ascii_case(".git")),
-                "Patches cannot modify Git metadata or the patch registry"
-            );
+            check_affected_path(file)?;
             if !files.iter().any(|existing| existing == file) {
                 files.push(file.to_owned());
             }
@@ -301,7 +303,26 @@ impl PatchService {
     fn inspect(&self, patch: Patch) -> Result<(PatchState, PathBuf)> {
         let path = self.patch_path(&patch)?;
         let affected_files = self.affected_files(&path)?;
-        let (compatibility, validation) = self.compatibility(&path)?;
+        let (compatibility, mut validation) = self.compatibility(&path)?;
+        // An unapplied patch is expected to differ from the checkout, so only
+        // applied or conflicting patches are compared with their base.
+        let outdated = match &patch.base {
+            Some(base) if compatibility != Compatibility::Compatible => {
+                match self.is_outdated(&path, base, &affected_files) {
+                    Ok(outdated) => outdated,
+                    Err(error) => {
+                        validation.push_str(&format!("\nCould not compare with {base}: {error:#}"));
+                        false
+                    }
+                }
+            }
+            _ => false,
+        };
+        if outdated {
+            validation.push_str(
+                "\nOutdated: the checkout changed since this patch was generated. Regenerate it to capture the current source.",
+            );
+        }
         let rebuild_required =
             patch.rebuild_required || compatibility == Compatibility::AlreadyApplied;
         Ok((
@@ -311,6 +332,7 @@ impl PatchService {
                 affected_files,
                 validation,
                 rebuild_required,
+                outdated,
             },
             path,
         ))
@@ -330,6 +352,7 @@ impl PatchService {
                     compatibility: Compatibility::Conflict,
                     affected_files: Vec::new(),
                     validation: format!("Validation failed: {error:#}"),
+                    outdated: false,
                 },
             })
             .collect())
@@ -462,6 +485,193 @@ impl PatchService {
         Ok(())
     }
 
+    fn resolve_base(&self, base: &str) -> Result<String> {
+        ensure!(
+            !base.is_empty() && !base.starts_with('-') && !base.contains(char::is_whitespace),
+            "Invalid base revision: {base}"
+        );
+        let commit = git_output(
+            &self.root,
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                "--end-of-options",
+                &format!("{base}^{{commit}}"),
+            ],
+        )
+        .with_context(|| format!("Unknown base revision: {base}"))?;
+        Ok(commit.trim().to_owned())
+    }
+
+    /// The patch that turns `base` into the current checkout for `files`.
+    fn diff_from_base(&self, base: &str, files: &[String]) -> Result<Vec<u8>> {
+        let commit = self.resolve_base(base)?;
+        let files: Vec<&str> = files
+            .iter()
+            .map(String::as_str)
+            .filter(|file| !is_lockfile(file))
+            .collect();
+        ensure!(
+            !files.is_empty(),
+            "No files to regenerate besides lockfiles"
+        );
+        let mut command = Command::new("git");
+        command
+            .arg("-C")
+            .arg(&self.root)
+            .args([
+                "diff",
+                "--full-index",
+                "--no-renames",
+                "--no-color",
+                "--no-ext-diff",
+                "--no-textconv",
+                &commit,
+                "--",
+            ])
+            .args(&files);
+        let output = run_command(&mut command)?;
+        ensure!(
+            output.status.success(),
+            "Git diff failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(output.stdout)
+    }
+
+    fn is_outdated(&self, path: &Path, base: &str, files: &[String]) -> Result<bool> {
+        let current = self.diff_from_base(base, files)?;
+        let stored = fs::read(path)?;
+        Ok(comparable(&current) != comparable(&stored))
+    }
+
+    /// Rewrites a registered patch from the difference between its base revision
+    /// and the current checkout. Source files are never changed, so the patch
+    /// must reverse-apply to the checkout afterwards. Returns whether the patch
+    /// content changed.
+    pub fn regenerate(&self, id: &str, base: Option<&str>, extra_files: &[String]) -> Result<bool> {
+        let _lock = self.lock()?;
+        let mut manifest = self.read_manifest()?;
+        let patch = manifest.find(id)?.clone();
+        let base = base
+            .map(str::to_owned)
+            .or_else(|| patch.base.clone())
+            .context("Set a base revision first, for example: regenerate <id> --base main")?;
+
+        // The stored patch may be outdated or edited, so its file list is read
+        // without requiring a matching hash or a clean application.
+        let destination = self.root.join(&patch.source);
+        ensure!(
+            safe_relative_path(&patch.source) && patch.source.starts_with("patches/"),
+            "Invalid patch source"
+        );
+        let mut files = if destination.is_file() {
+            self.affected_files(&destination).or_else(|error| {
+                if extra_files.is_empty() {
+                    Err(error.context("Pass the patch's files with --add"))
+                } else {
+                    Ok(Vec::new())
+                }
+            })?
+        } else {
+            Vec::new()
+        };
+        for file in extra_files {
+            check_affected_path(file)?;
+            if !files.contains(file) {
+                files.push(file.clone());
+            }
+        }
+        files.retain(|file| !is_lockfile(file));
+        files.sort();
+
+        for other in manifest.patches.iter().filter(|other| other.id != id) {
+            let Ok(other_path) = self.patch_path(other) else {
+                continue;
+            };
+            let Ok(other_files) = self.affected_files(&other_path) else {
+                continue;
+            };
+            let shared: Vec<_> = files
+                .iter()
+                .filter(|file| other_files.contains(file))
+                .map(String::as_str)
+                .collect();
+            ensure!(
+                shared.is_empty(),
+                "Files are also changed by patch {}: {}. A regenerated diff cannot tell the two patches apart.",
+                other.id,
+                shared.join(", ")
+            );
+        }
+
+        let mut command = Command::new("git");
+        command
+            .arg("-C")
+            .arg(&self.root)
+            .args(["ls-files", "--"])
+            .args(&files);
+        let tracked = run_command(&mut command)?;
+        ensure!(tracked.status.success(), "Git ls-files failed");
+        let tracked = String::from_utf8(tracked.stdout)?;
+        let untracked: Vec<_> = files
+            .iter()
+            .filter(|file| {
+                self.root.join(file).exists() && !tracked.lines().any(|line| line == *file)
+            })
+            .map(String::as_str)
+            .collect();
+        ensure!(
+            untracked.is_empty(),
+            "Track new files with `git add` before regenerating: {}",
+            untracked.join(", ")
+        );
+
+        let content = self.diff_from_base(&base, &files)?;
+        ensure!(
+            !content.is_empty(),
+            "The checkout matches {base} for these files; there is nothing to regenerate"
+        );
+        ensure!(
+            content.len() as u64 <= MAX_PATCH_SIZE,
+            "Patch exceeds 10 MiB"
+        );
+        let previous = fs::read(&destination).ok();
+        if previous.as_deref() == Some(content.as_slice()) && patch.base.as_deref() == Some(&base) {
+            return Ok(false);
+        }
+        let mut temporary = tempfile::NamedTempFile::new_in(self.registry())?;
+        temporary.write_all(&content)?;
+        temporary.as_file().sync_all()?;
+        self.affected_files(temporary.path())?;
+        let (compatibility, validation) = self.compatibility(temporary.path())?;
+        ensure!(
+            compatibility == Compatibility::AlreadyApplied,
+            "Regenerated patch does not match the checkout: {validation}"
+        );
+        temporary.persist(&destination)?;
+        let entry = manifest.find_mut(id)?;
+        entry.sha256 = sha256(&content);
+        entry.base = Some(base);
+        if let Err(error) = self.write_manifest(&manifest) {
+            match previous {
+                Some(previous) => {
+                    let mut rollback = tempfile::NamedTempFile::new_in(self.registry())?;
+                    rollback.write_all(&previous)?;
+                    rollback.as_file().sync_all()?;
+                    rollback
+                        .persist(&destination)
+                        .context("Manifest update failed and patch rollback failed")?;
+                }
+                None => fs::remove_file(&destination)
+                    .context("Manifest update failed and patch cleanup failed")?,
+            }
+            return Err(error);
+        }
+        Ok(true)
+    }
+
     pub fn preview(&self, id: &str) -> Result<DiffPreview> {
         let _lock = self.lock()?;
         let (state, patch_path) = self.inspect(self.read_manifest()?.find(id)?.clone())?;
@@ -560,6 +770,32 @@ fn git_output(root: &Path, arguments: &[&str]) -> Result<String> {
         String::from_utf8_lossy(&output.stderr).trim()
     );
     Ok(String::from_utf8(output.stdout)?)
+}
+
+fn check_affected_path(file: &str) -> Result<()> {
+    ensure!(safe_relative_path(file), "Unsafe affected path: {file}");
+    ensure!(
+        !file.starts_with("patches/")
+            && !file
+                .split('/')
+                .any(|part| part.eq_ignore_ascii_case(".git")),
+        "Patches cannot modify Git metadata or the patch registry"
+    );
+    Ok(())
+}
+
+fn is_lockfile(file: &str) -> bool {
+    let name = file.rsplit('/').next().unwrap_or(file);
+    LOCKFILES.contains(&name)
+}
+
+/// Abbreviated and full `index` lines describe the same change, so they are
+/// ignored when deciding whether a stored patch still matches the checkout.
+fn comparable(patch: &[u8]) -> Vec<&[u8]> {
+    patch
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.starts_with(b"index "))
+        .collect()
 }
 
 fn sha256(content: &[u8]) -> String {

@@ -7,7 +7,8 @@ const USAGE: &str = "Usage:
   zed-patch <checkout> enable|disable <id>
   zed-patch <checkout> apply|revert|remove <id> --confirm-source-change
   zed-patch <checkout> register <file.patch> <metadata.json>
-  zed-patch <checkout> update <id> <replacement.patch>";
+  zed-patch <checkout> update <id> <replacement.patch>
+  zed-patch <checkout> regenerate <id> [--base <revision>] [--add <path>]...";
 
 fn main() -> Result<()> {
     let mut arguments = std::env::args().skip(1);
@@ -22,11 +23,21 @@ fn main() -> Result<()> {
         let states = service.list()?;
         println!("{}", serde_json::to_string_pretty(&states)?);
         if operation == "validate" {
+            let failed: Vec<_> = states
+                .iter()
+                .filter(|state| state.compatibility == Compatibility::Conflict || state.outdated)
+                .map(|state| {
+                    if state.outdated {
+                        format!("{} (outdated; run regenerate)", state.patch.id)
+                    } else {
+                        format!("{} (conflict)", state.patch.id)
+                    }
+                })
+                .collect();
             ensure!(
-                states
-                    .iter()
-                    .all(|state| state.compatibility != Compatibility::Conflict),
-                "Patch validation failed"
+                failed.is_empty(),
+                "Patch validation failed: {}",
+                failed.join(", ")
             );
         }
         return Ok(());
@@ -45,6 +56,20 @@ fn main() -> Result<()> {
     }
     let id = arguments.next().context("Missing patch ID")?;
     match operation.as_str() {
+        "regenerate" => {
+            let mut base = None;
+            let mut extra_files = Vec::new();
+            while let Some(argument) = arguments.next() {
+                match argument.as_str() {
+                    "--base" => base = Some(arguments.next().context("Missing --base revision")?),
+                    "--add" => extra_files.push(arguments.next().context("Missing --add path")?),
+                    _ => bail!("Unknown regenerate option: {argument}\n{USAGE}"),
+                }
+            }
+            if !service.regenerate(&id, base.as_deref(), &extra_files)? {
+                println!("Patch already matches the checkout.");
+            }
+        }
         "update" => service.update(
             &id,
             Path::new(

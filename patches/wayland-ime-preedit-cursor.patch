@@ -1,5 +1,5 @@
 diff --git a/crates/gpui_linux/src/linux/wayland/client.rs b/crates/gpui_linux/src/linux/wayland/client.rs
-index 2d40cf7fa9..bb55bd37ee 100644
+index 2d40cf7fa94e1a6edc5e07facb8c153cdff0c4c3..bb55bd37eefae51c87a62193f54b919dcad59b65 100644
 --- a/crates/gpui_linux/src/linux/wayland/client.rs
 +++ b/crates/gpui_linux/src/linux/wayland/client.rs
 @@ -192,6 +192,15 @@ fn set_ime_cursor_rectangle_after_done(
@@ -76,7 +76,7 @@ index 2d40cf7fa9..bb55bd37ee 100644
      fn caches_cursor_rectangle_committed_after_done() {
          let text_input = FakeImeCursorRectangleSink::default();
 diff --git a/crates/gpui_linux/src/linux/wayland/window.rs b/crates/gpui_linux/src/linux/wayland/window.rs
-index 8d92234ef1..8c432a5e72 100644
+index 8d92234ef1ea40612220bd6b78b00fc2dd7c3565..8c432a5e72db5b0eb52530e5a560d8d45b58a26c 100644
 --- a/crates/gpui_linux/src/linux/wayland/window.rs
 +++ b/crates/gpui_linux/src/linux/wayland/window.rs
 @@ -763,6 +763,7 @@ pub(crate) struct WaylandWindow(pub WaylandWindowStatePtr);
