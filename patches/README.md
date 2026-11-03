@@ -125,6 +125,25 @@ Interactive verification is still needed for platform file pickers, light/dark
 appearance, narrow windows, font scaling, confirmation dialogs and live Wayland
 IME input.
 
+## Copy Diagnostic with Code
+
+The `diagnostic-copy-with-code` patch changes the **Copy Diagnostic** button in
+hover popovers, inline diagnostic blocks and the diagnostics panel. Instead of
+the message alone it copies, ready to paste into an issue or a chat:
+
+````text
+error: mismatched types (rustc E0308)
+--> src/main.rs:2:18
+
+```rust
+2 |     let x: u32 = "a";
+```
+````
+
+The block contains the lines the diagnostic covers (at most 30, with a note
+for the rest). The code fence grows when the code itself contains backticks.
+Diagnostics without a buffer fall back to the message alone.
+
 ## Background settings
 
 Run **background: open settings** to open the Background page. It is grouped as:

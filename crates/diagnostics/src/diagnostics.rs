@@ -557,6 +557,7 @@ impl ProjectDiagnosticsEditor {
                     crate::diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
                         group,
                         buffer_snapshot.remote_id(),
+                        Some(&buffer_snapshot),
                         Some(diagnostics_toolbar_editor.clone()),
                         languages,
                         cx,
